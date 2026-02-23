@@ -1,8 +1,8 @@
 # BitClaw
 
-A personal Claude assistant that runs in a Docker container, talks to you on Telegram.
+A personal, secure and self-upgrading Claude assistant that runs in a Docker container and talks to you on Telegram.
 
-Inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw) — same philosophy, ~1200 lines of TypeScript. Small enough to read in one sitting.
+Inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw) — same philosophy, 5x smaller @ 1200 lines of TypeScript! Small enough to read and understand in one sitting.
 
 ## Quick Start
 
@@ -16,19 +16,15 @@ Then run `/setup`. Claude handles dependencies, API keys, Telegram bot, containe
 
 ## What It Does
 
-- **Telegram I/O** — message Claude from your phone
+- **Telegram I/O** — message BitClaw from your phone
 - **Container isolation** — the agent runs in Docker, not on your host
 - **Persistent sessions** — conversation context survives restarts
 - **Scheduled tasks** — recurring and one-shot jobs via file-based cron
 - **Web access** — search and fetch content
-- **Extensible** — add MCP integrations (Gmail, Calendar, etc.) via `/customize`
+- **Self-building** — run Claude to add integration (Gmail, Calendar, etc.) via `/customize`
 - **Runs as a service** — auto-starts at login, auto-restarts on crash
 
 ## How It Works
-
-```
-Telegram (grammy) → Host orchestrator → IPC (filesystem) → Container (Claude Agent SDK) → Response
-```
 
 Single Node.js process on the host. The agent runs in an isolated Docker container with mounted directories. Communication is via atomic JSON files in a shared IPC directory. No databases, no message queues.
 
