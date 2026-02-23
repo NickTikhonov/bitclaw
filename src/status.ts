@@ -28,19 +28,15 @@ const FUN_FALLBACKS = [
   '🎯 Locking on target…',
   '🧪 Running experiments…',
   '🪄 Working some magic…',
-  '🏗️ Building something…',
-  '🎨 Crafting a response…',
   '🐙 Wrangling octopi…',
   '⚡ Zapping electrons…',
   '🌀 Entering the vortex…',
-  '🧩 Solving puzzles…',
   '🚀 Launching sequence…',
-  '🎪 Juggling tasks…',
   '🦾 Flexing the muscles…',
   '🍳 Cooking something up…',
   '📡 Phoning a friend…',
   '🗺️ Charting new territory…',
-  '🎸 Shredding code…',
+  '🎸 Shredding…',
 ];
 
 /**
