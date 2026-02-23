@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { CONTAINER_IMAGE, CONTAINER_NAME, createBitclawPaths, ensureBitclawDirs, ensureWorkspaceAgentFile, type BitclawPaths } from './config.js';
 import { loadProjectEnv } from './env.js';
@@ -42,6 +43,10 @@ export function startContainer(projectRoot: string): RuntimeStartResult {
   }
   const bootstrap = JSON.stringify({ secrets });
 
+  const logFile = path.join(paths.logsDir, 'container.log');
+  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+  logStream.write(`\n--- container start ${new Date().toISOString()} ---\n`);
+
   const run = spawn(
     'docker',
     [
@@ -61,9 +66,12 @@ export function startContainer(projectRoot: string): RuntimeStartResult {
     ],
     {
       detached: true,
-      stdio: ['pipe', 'ignore', 'ignore'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     },
   );
+
+  run.stdout.pipe(logStream);
+  run.stderr.pipe(logStream);
 
   run.stdin.write(bootstrap);
   run.stdin.end();

@@ -10,6 +10,7 @@ export interface BitclawPaths {
   ipcArchiveDir: string;
   sessionsDir: string;
   workspaceDir: string;
+  logsDir: string;
 }
 
 export function resolveBitclawHomeDir(): string {
@@ -32,6 +33,7 @@ export function createBitclawPaths(homeDir = resolveBitclawHomeDir()): BitclawPa
     ipcArchiveDir: path.join(homeDir, 'ipc', 'archive'),
     sessionsDir: path.join(homeDir, 'sessions', '.claude'),
     workspaceDir: path.join(homeDir, 'workspace'),
+    logsDir: path.join(homeDir, 'logs'),
   };
 }
 

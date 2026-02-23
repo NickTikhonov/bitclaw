@@ -1,4 +1,4 @@
-# bitclaw (minimal container runtime v1)
+# bitclaw
 
 Lightweight, IPC-only container runtime inspired by NanoClaw, with a TypeScript container that runs Claude Agent SDK.
 
@@ -13,26 +13,31 @@ Lightweight, IPC-only container runtime inspired by NanoClaw, with a TypeScript 
 npm install
 ```
 
+```bash
+cp .env.example .env
+# then edit .env and set ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+```
+
 Optional instance isolation:
 
 ```bash
 export BITCLAW_HOME=~/.bitclaw-dev-1
 ```
 
-## Start Container
-
-Required for real Claude responses:
+## Run
 
 ```bash
-cp .env.example .env
-# then edit .env and set ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN)
+npm start
 ```
 
-```bash
-npm run container:start
-```
+This starts the main process which:
 
-This builds and runs one container with mounts:
+- Builds and starts the agent container
+- Listens for Telegram messages and routes them to the container via IPC
+- Polls outbound IPC and sends responses back to Telegram
+- Restarts the container every 4 hours
+
+The container is started with mounts:
 
 - `<BITCLAW_HOME>/ipc` -> `/workspace/ipc`
 - `<BITCLAW_HOME>/workspace` -> `/workspace/workspace`
@@ -40,53 +45,35 @@ This builds and runs one container with mounts:
 
 `<BITCLAW_HOME>/workspace/AGENT.md` is bootstrapped if missing.
 
-## Interact via IPC
+## REPL
 
-Interactive REPL (starts/restarts container each run):
+Interactive chat (starts/restarts container each run):
 
 ```bash
 npm run chat
 ```
 
-Inside chat:
+Inside chat: `/help`, `/restart`, `/exit`.
 
-- `/help` for commands
-- `/restart` to restart container
-- `/exit` to quit (and stop container)
+## Logs
 
-Send inbound message:
+Container stdout/stderr are appended to:
 
-```bash
-npm run ipc:send -- messages "hello container"
+```
+~/.bitclaw/logs/container.log
 ```
 
-Poll outbound events:
+Tail live:
 
 ```bash
-npm run ipc:poll
-```
-
-The outbound `result` events include Claude SDK responses (or error details if auth/config is missing).
-
-Stop container:
-
-```bash
-npm run container:stop
+tail -f ~/.bitclaw/logs/container.log
 ```
 
 ## IPC filenames
 
-All message files follow:
+All message files follow: `<unixtimestamp>_<in|out>_<rand7>.json`
 
-`<unixtimestamp>_<in|out>_<rand7>.json`
-
-Example:
-
-`1739859455_out_z9x8w7v.json`
-
-Processed and failed files are archived into:
-
-- `<BITCLAW_HOME>/ipc/archive`
+Processed and failed files are archived into `<BITCLAW_HOME>/ipc/archive`.
 
 ## Tests
 
