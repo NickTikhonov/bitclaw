@@ -1,78 +1,70 @@
-# bitclaw
+# BitClaw
 
-Lightweight, IPC-only container runtime inspired by NanoClaw, with a TypeScript container that runs Claude Agent SDK.
+A personal Claude assistant that runs in a Docker container, talks to you on Telegram.
 
-## Principles
+Inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw) — same philosophy, ~1200 lines of TypeScript. Small enough to read in one sitting.
 
-- Lightweight.
-- Unit tested.
+## Quick Start
+
+```bash
+git clone https://github.com/NickTikhonov/bitclaw.git
+cd bitclaw
+claude
+```
+
+Then run `/setup`. Claude handles dependencies, API keys, Telegram bot, container build, and service installation.
+
+## What It Does
+
+- **Telegram I/O** — message Claude from your phone
+- **Container isolation** — the agent runs in Docker, not on your host
+- **Persistent sessions** — conversation context survives restarts
+- **Scheduled tasks** — recurring and one-shot jobs via file-based cron
+- **Web access** — search and fetch content
+- **Extensible** — add MCP integrations (Gmail, Calendar, etc.) via `/customize`
+- **Runs as a service** — auto-starts at login, auto-restarts on crash
+
+## How It Works
+
+```
+Telegram (grammy) → Host orchestrator → IPC (filesystem) → Container (Claude Agent SDK) → Response
+```
+
+Single Node.js process on the host. The agent runs in an isolated Docker container with mounted directories. Communication is via atomic JSON files in a shared IPC directory. No databases, no message queues.
 
 ## Setup
 
+Prerequisites: macOS, Node.js 20+, Docker, [Claude Code](https://claude.ai/download).
+
 ```bash
 npm install
-```
-
-```bash
 cp .env.example .env
-# then edit .env and set ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+# Set ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 ```
 
-Optional instance isolation:
-
-```bash
-export BITCLAW_HOME=~/.bitclaw-dev-1
-```
-
-## Run (macOS service)
-
-Install as a LaunchAgent (auto-starts at login, auto-restarts on crash):
+Install as a macOS service (auto-starts at login):
 
 ```bash
 ./.claude/skills/setup/scripts/02-install-service.sh
 ```
 
-Manage the service:
+Or run `/setup` in Claude Code for guided installation.
+
+## Usage
+
+Message your Telegram bot. That's it.
+
+The agent has access to a persistent workspace at `~/.bitclaw/workspace/` where it can store notes, code, and artifacts. Edit `workspace/AGENT.md` to customize how it behaves.
+
+### Service Management
 
 ```bash
-launchctl list | grep bitclaw                                  # status
-launchctl kickstart -k gui/$(id -u)/com.bitclaw                # restart
-launchctl bootout gui/$(id -u)/com.bitclaw                     # stop
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.bitclaw.plist  # start
+launchctl kickstart -k gui/$(id -u)/com.bitclaw    # restart
+launchctl kill SIGTERM gui/$(id -u)/com.bitclaw     # stop
+launchctl list | grep bitclaw                       # status
 ```
 
-Or run in the foreground for debugging:
-
-```bash
-npm start
-```
-
-The main process:
-
-- Builds and starts the agent container
-- Listens for Telegram messages and routes them to the container via IPC
-- Polls outbound IPC and sends responses back to Telegram
-- Restarts the container every 4 hours
-
-The container is started with mounts:
-
-- `<BITCLAW_HOME>/ipc` -> `/workspace/ipc`
-- `<BITCLAW_HOME>/workspace` -> `/workspace/workspace`
-- `<BITCLAW_HOME>/sessions/.claude` -> `/home/node/.claude`
-
-`<BITCLAW_HOME>/workspace/AGENT.md` is bootstrapped if missing.
-
-## REPL
-
-Interactive chat (starts/restarts container each run):
-
-```bash
-npm run chat
-```
-
-Inside chat: `/help`, `/restart`, `/exit`.
-
-## Logs
+### Logs
 
 ```bash
 tail -f ~/.bitclaw/logs/app.log          # host orchestrator
@@ -80,14 +72,18 @@ tail -f ~/.bitclaw/logs/app.error.log    # host errors
 tail -f ~/.bitclaw/logs/container.log    # agent container
 ```
 
-## IPC filenames
+### REPL
 
-All message files follow: `<unixtimestamp>_<in|out>_<rand7>.json`
-
-Processed and failed files are archived into `<BITCLAW_HOME>/ipc/archive`.
-
-## Tests
+For local debugging without Telegram:
 
 ```bash
-npm test
+npm run chat
 ```
+
+## Customizing
+
+Run `/customize` in Claude Code to add MCP integrations or expose extra folders to the agent. Or just tell Claude what you want — the codebase is small enough that it can safely modify it.
+
+## License
+
+MIT
