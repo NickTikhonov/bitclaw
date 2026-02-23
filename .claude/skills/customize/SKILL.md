@@ -7,7 +7,7 @@ description: Add MCP integrations (Gmail, Calendar, etc.) or expose extra folder
 
 This skill helps users extend BitClaw by adding MCP servers or exposing additional host directories to the container agent. All customization is stored in `bitclaw.config.json` in the project root.
 
-**Principle:** Ask what the user wants, make the changes directly to `bitclaw.config.json` and `.env`, then tell them to restart with `npm start`.
+**Principle:** Ask what the user wants, make the changes, and restart the service yourself. Don't tell the user to go do things — do them.
 
 ## Config File
 
@@ -39,12 +39,178 @@ All customization lives in `bitclaw.config.json`:
 
 1. Ask: "What would you like to add? An MCP integration (Gmail, Calendar, etc.) or extra folder access?"
 2. Follow the appropriate section below.
-3. After changes, tell the user to restart: `npm start` (or Ctrl+C and re-run).
+3. After all changes, restart the service (see "After All Changes" at the bottom).
 
-## Adding an MCP Server
+---
+
+## Adding Gmail
+
+### 1. Check Existing Gmail Setup
+
+```bash
+ls -la ~/.gmail-mcp/ 2>/dev/null || echo "No Gmail config found"
+```
+
+If `credentials.json` exists, skip to step 5 (Verify).
+
+### 2. Create Gmail Config Directory
+
+```bash
+mkdir -p ~/.gmail-mcp
+```
+
+### 3. GCP Project Setup
+
+**USER ACTION REQUIRED** — walk through step by step, waiting for confirmation at each stage.
+
+Tell the user:
+
+> I'll walk you through setting up Google Cloud OAuth credentials.
+>
+> 1. Open https://console.cloud.google.com in your browser
+> 2. Create a new project (or select existing) — click the project dropdown at the top
+
+Wait for confirmation, then:
+
+> 3. Enable the Gmail API:
+>    - In the left sidebar, go to **APIs & Services → Library**
+>    - Search for "Gmail API"
+>    - Click on it, then click **Enable**
+
+Wait for confirmation, then:
+
+> 4. Create OAuth credentials:
+>    - Go to **APIs & Services → Credentials** (in the left sidebar)
+>    - Click **+ CREATE CREDENTIALS** at the top
+>    - Select **OAuth client ID**
+>    - If prompted for consent screen, choose "External", fill in app name (e.g., "BitClaw"), your email, and save
+>    - For Application type, select **Desktop app**
+>    - Name it anything (e.g., "BitClaw Gmail")
+>    - Click **Create**
+
+Wait for confirmation, then:
+
+> 5. Download the credentials:
+>    - Click **DOWNLOAD JSON** on the popup (or find it in the credentials list and click the download icon)
+>    - Save it as `gcp-oauth.keys.json`
+>
+> Where did you save the file? (Give me the full path, or paste the file contents here)
+
+If user provides a path:
+```bash
+cp "/path/user/provided/gcp-oauth.keys.json" ~/.gmail-mcp/gcp-oauth.keys.json
+```
+
+If user pastes JSON content, write it directly to `~/.gmail-mcp/gcp-oauth.keys.json`.
+
+Verify:
+```bash
+cat ~/.gmail-mcp/gcp-oauth.keys.json | head -5
+```
+
+### 4. OAuth Authorization
+
+**USER ACTION REQUIRED**
+
+Tell the user:
+
+> I'm going to run the Gmail authorization. A browser window will open asking you to sign in to Google and grant access.
+>
+> **Important:** If you see a warning that the app isn't verified, click "Advanced" then "Go to [app name] (unsafe)" — this is normal for personal OAuth apps.
+
+Run:
+```bash
+npx -y @gongrzhe/server-gmail-autoauth-mcp auth
+```
+
+If that doesn't work (some versions don't have an auth subcommand):
+```bash
+timeout 60 npx -y @gongrzhe/server-gmail-autoauth-mcp || true
+```
+
+Tell user to complete the authorization in their browser.
+
+### 5. Verify Gmail Access
+
+```bash
+if [ -f ~/.gmail-mcp/credentials.json ]; then
+  echo "Gmail authorization successful!"
+  ls -la ~/.gmail-mcp/
+else
+  echo "ERROR: credentials.json not found — authorization may have failed"
+fi
+```
+
+### 6. Add Gmail to Config
+
+Add the Gmail MCP server and credentials mount to `bitclaw.config.json`:
+
+```json
+{
+  "mcpServers": {
+    "gmail": {
+      "command": "npx",
+      "args": ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],
+      "env": []
+    }
+  },
+  "mounts": [
+    {
+      "host": "~/.gmail-mcp",
+      "container": "/home/node/.gmail-mcp",
+      "readonly": false
+    }
+  ]
+}
+```
+
+The mount must be **read-write** (`readonly: false`) because the MCP server may need to refresh OAuth tokens.
+
+### 7. Update Agent Memory
+
+Append to `~/.bitclaw/workspace/AGENT.md`:
+
+```markdown
+
+## Email (Gmail)
+
+You have access to Gmail via MCP tools:
+- `mcp__gmail__search_emails` — Search emails with a query
+- `mcp__gmail__get_email` — Get full email content by ID
+- `mcp__gmail__send_email` — Send an email
+- `mcp__gmail__draft_email` — Create a draft
+- `mcp__gmail__list_labels` — List available labels
+
+Examples: "Check my unread emails from today" or "Send an email to john@example.com about the meeting"
+```
+
+### 8. Restart and Test
+
+Follow "After All Changes" below, then tell the user:
+
+> Gmail is set up! Test it by sending a Telegram message like:
+>
+> "Check my recent emails"
+>
+> or: "List my Gmail labels"
+
+Monitor for errors:
+```bash
+tail -f ~/.bitclaw/logs/container.log
+```
+
+### Gmail Troubleshooting
+
+- **MCP not responding:** `npx -y @gongrzhe/server-gmail-autoauth-mcp` — test directly
+- **OAuth token expired:** `rm ~/.gmail-mcp/credentials.json` then re-run auth (step 4)
+- **Container can't access Gmail:** Verify `~/.gmail-mcp` mount in `bitclaw.config.json`
+
+---
+
+## Adding a Generic MCP Server
 
 ### Questions to ask:
-- Which service? (Gmail, Google Calendar, Notion, Slack, filesystem, etc.)
+- Which service? (Google Calendar, Notion, Slack, GitHub, etc.)
 - Do they already have API credentials/tokens for it?
 
 ### Implementation:
@@ -53,7 +219,6 @@ All customization lives in `bitclaw.config.json`:
 
 | Service | Package | Required Env Vars |
 |---------|---------|-------------------|
-| Gmail | `@anthropic-ai/gmail-mcp` | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` |
 | Google Calendar | `@anthropic-ai/google-calendar-mcp` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` |
 | Google Drive | `@anthropic-ai/google-drive-mcp` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` |
 | Slack | `@anthropic-ai/slack-mcp` | `SLACK_BOT_TOKEN` |
@@ -68,43 +233,35 @@ If you don't know the package name, search the web for `"<service> mcp server np
 ```json
 {
   "mcpServers": {
-    "gmail": {
+    "calendar": {
       "command": "npx",
-      "args": ["-y", "@anthropic-ai/gmail-mcp"],
-      "env": ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"]
+      "args": ["-y", "@anthropic-ai/google-calendar-mcp"],
+      "env": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"]
     }
   }
 }
 ```
 
-3. Add required env vars to `.env`:
+3. Add required env vars to `.env` and `.env.example` (with comments explaining what they are and where to get them).
 
-```
-GMAIL_CLIENT_ID=...
-GMAIL_CLIENT_SECRET=...
-GMAIL_REFRESH_TOKEN=...
-```
+4. If the MCP server stores credentials on disk (like Gmail), add a mount for them in `bitclaw.config.json`.
 
-4. Also add them to `.env.example` with comments explaining what they are and where to get them.
+5. Update `~/.bitclaw/workspace/AGENT.md` with the available tools.
 
-5. Tell the user how to get the credentials if they don't have them. For Google services, this typically involves:
-   - Creating a project in Google Cloud Console
-   - Enabling the relevant API
-   - Creating OAuth 2.0 credentials
-   - Getting a refresh token via the OAuth flow
-
-6. **Important:** MCP servers run inside the Docker container. The container needs network access for external APIs. If the container doesn't currently have network access, note this to the user — they may need to add `--network host` or specific network config. Currently BitClaw runs containers with default Docker networking which allows outbound connections.
+6. **Important:** MCP servers run inside the Docker container. The container uses default Docker networking which allows outbound connections.
 
 ### Verification:
 
-After restarting, the user can check container logs for MCP initialization:
+After restarting, check container logs:
 ```bash
 tail -f ~/.bitclaw/logs/container.log
 ```
 
-They should see a log line like: `External MCP servers: gmail`
+You should see: `External MCP servers: <name>`
 
-Then send a message via Telegram asking the agent to use the new capability.
+Then send a Telegram message asking the agent to use the new capability.
+
+---
 
 ## Exposing Extra Folders
 
@@ -133,7 +290,7 @@ Then send a message via Telegram asking the agent to use the new capability.
 3. `container`: Where it appears inside the container. Use `/workspace/extra/<name>` as convention.
 4. `readonly`: Set to `true` unless the user explicitly needs write access. Read-only is safer.
 
-5. Update the workspace AGENT.md (`~/.bitclaw/workspace/AGENT.md`) to tell the agent about the new mount:
+5. Update `~/.bitclaw/workspace/AGENT.md` to tell the agent about the new mount:
 
 ```markdown
 ## Extra Mounts
@@ -142,13 +299,17 @@ Then send a message via Telegram asking the agent to use the new capability.
 
 ### Verification:
 
-After restarting, the user can ask the agent: "List the files in /workspace/extra/notes" to confirm access.
+After restarting, ask the agent: "List the files in /workspace/extra/notes" to confirm access.
+
+---
 
 ## Removing Customizations
 
 To remove an MCP server: delete its entry from `mcpServers` in `bitclaw.config.json` and optionally remove its env vars from `.env`.
 
 To remove a mount: delete its entry from `mounts` in `bitclaw.config.json`.
+
+---
 
 ## After All Changes
 
