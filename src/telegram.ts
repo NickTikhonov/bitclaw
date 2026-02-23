@@ -34,42 +34,14 @@ export class TelegramChannel implements Channel {
   async send(text: string): Promise<void> {
     this.setTyping(false);
 
-    // If there's an active status message, replace it with the final text
+    // Delete the status message if one exists — we must send a NEW message
+    // (not edit) because only sendMessage clears Telegram's typing indicator.
     if (this.statusMessageId) {
       const msgId = this.statusMessageId;
       this.statusMessageId = null;
-
-      const formatted = telegramifyMarkdown(text, 'escape');
-      const first = chunkString(formatted, MAX_MSG_LENGTH)[0];
-      try {
-        await this.bot.api.editMessageText(this.chatId, msgId, first, {
-          parse_mode: 'MarkdownV2',
-        });
-      } catch {
-        // Fallback: edit as plain text
-        try {
-          await this.bot.api.editMessageText(
-            this.chatId,
-            msgId,
-            text.slice(0, MAX_MSG_LENGTH),
-          );
-        } catch {
-          // Edit failed entirely — send a new message instead
-          await this.sendNew(text);
-          return;
-        }
-      }
-
-      // If the text was longer than one chunk, send remaining chunks as new messages
-      const formatted2 = telegramifyMarkdown(text, 'escape');
-      const chunks = chunkString(formatted2, MAX_MSG_LENGTH);
-      for (let i = 1; i < chunks.length; i++) {
-        await this.sendChunk(chunks[i], text);
-      }
-      return;
+      this.bot.api.deleteMessage(this.chatId, msgId).catch(() => {});
     }
 
-    // No status message — send normally
     await this.sendNew(text);
   }
 
