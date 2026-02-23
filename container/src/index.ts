@@ -34,6 +34,19 @@ const WORKSPACE_DIR = '/workspace/workspace';
 const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
 const SESSION_STATE_FILE = '/home/node/.claude/bitclaw-session.json';
 
+const SYSTEM_PROMPT = `You are BitClaw, a smart AI agent.
+
+## Files you have access to:
+
+- working directory: /workspace/workspace
+
+## Instructions
+
+- Read AGENT.md in your working directory to understand your purpose and how to behave. You can edit this file when the user asks you to behave differently.
+- You have full filesystem access within /workspace/workspace. Use it to store notes, code, or any artifacts.
+- You can run shell commands via Bash, read/write/edit files, search the web, and use MCP tools.
+- Be direct and efficient. Avoid unnecessary preamble.`;
+
 let sessionId: string | undefined;
 let resumeAt: string | undefined;
 
@@ -206,6 +219,7 @@ async function runClaudeQuery(
   for await (const message of query({
     prompt,
     options: {
+      systemPrompt: SYSTEM_PROMPT,
       cwd: WORKSPACE_DIR,
       resume: isolated ? undefined : sessionId,
       resumeSessionAt: isolated ? undefined : resumeAt,
