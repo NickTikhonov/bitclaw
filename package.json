@@ -18,7 +18,6 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
     "cron-parser": "^5.5.0"
   }
 }

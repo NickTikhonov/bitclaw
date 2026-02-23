@@ -104,8 +104,7 @@ export class Orchestrator {
           if (event.type === 'tool_call') {
             const toolName = String(event.toolName ?? '');
             if (toolName) {
-              const status = await generateStatus(toolName);
-              this.channel.setToolStatus(status);
+              this.channel.setToolStatus(generateStatus(toolName));
             }
             return;
           }
