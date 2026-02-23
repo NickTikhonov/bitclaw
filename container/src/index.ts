@@ -25,8 +25,15 @@ interface InboundEnvelope {
   taskId?: string;
 }
 
+interface McpServerBootstrap {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
 interface BootstrapInput {
   secrets?: Record<string, string>;
+  mcpServers?: Record<string, McpServerBootstrap>;
 }
 
 const POLL_MS = 400;
@@ -232,10 +239,14 @@ async function runClaudeQuery(
   prompt: string,
   sdkEnv: Record<string, string | undefined>,
   isolated: boolean,
+  externalMcpServers: Record<string, McpServerBootstrap>,
 ): Promise<void> {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
   let latestResult: string | null = null;
+
+  // Build allowed tool patterns for external MCP servers
+  const externalMcpToolPatterns = Object.keys(externalMcpServers).map((name) => `mcp__${name}__*`);
 
   for await (const message of query({
     prompt,
@@ -264,6 +275,7 @@ async function runClaudeQuery(
         'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
+        ...externalMcpToolPatterns,
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -275,6 +287,7 @@ async function runClaudeQuery(
           args: [mcpServerPath],
           env: {},
         },
+        ...externalMcpServers,
       },
       hooks: {
         PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
@@ -324,6 +337,7 @@ async function runClaudeQuery(
 async function processInbound(
   inbound: InboundEnvelope,
   sdkEnv: Record<string, string | undefined>,
+  externalMcpServers: Record<string, McpServerBootstrap>,
 ): Promise<{ shouldStop: boolean }> {
   if (inbound.type === 'shutdown') {
     return { shouldStop: true };
@@ -333,7 +347,7 @@ async function processInbound(
     if (!sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.CLAUDE_CODE_OAUTH_TOKEN) {
       throw new Error('Missing Claude auth credentials (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)');
     }
-    await runClaudeQuery(inbound.text ?? '', sdkEnv, false);
+    await runClaudeQuery(inbound.text ?? '', sdkEnv, false, externalMcpServers);
     return { shouldStop: false };
   }
 
@@ -341,7 +355,7 @@ async function processInbound(
     if (!sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.CLAUDE_CODE_OAUTH_TOKEN) {
       throw new Error('Missing Claude auth credentials (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)');
     }
-    await runClaudeQuery(inbound.prompt ?? '', sdkEnv, true);
+    await runClaudeQuery(inbound.prompt ?? '', sdkEnv, true, externalMcpServers);
     return { shouldStop: false };
   }
 
@@ -349,7 +363,7 @@ async function processInbound(
     if (!sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.CLAUDE_CODE_OAUTH_TOKEN) {
       throw new Error('Missing Claude auth credentials (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)');
     }
-    await runClaudeQuery(inbound.prompt ?? 'heartbeat', sdkEnv, true);
+    await runClaudeQuery(inbound.prompt ?? 'heartbeat', sdkEnv, true, externalMcpServers);
     return { shouldStop: false };
   }
 
@@ -369,6 +383,10 @@ async function main(): Promise<void> {
   const stdin = await readBootstrapFromStdin();
   const bootstrap: BootstrapInput = stdin.trim() ? JSON.parse(stdin) : {};
   const sdkEnv = buildSdkEnv(bootstrap.secrets ?? {});
+  const externalMcpServers = bootstrap.mcpServers ?? {};
+  if (Object.keys(externalMcpServers).length > 0) {
+    log(`External MCP servers: ${Object.keys(externalMcpServers).join(', ')}`);
+  }
   loadSessionState();
 
   let shouldStop = false;
@@ -377,7 +395,7 @@ async function main(): Promise<void> {
     for (const filePath of inboundFiles) {
       try {
         const payload = JSON.parse(fs.readFileSync(filePath, 'utf8')) as InboundEnvelope;
-        const result = await processInbound(payload, sdkEnv);
+        const result = await processInbound(payload, sdkEnv, externalMcpServers);
         archiveMessage(filePath);
         if (result.shouldStop) {
           shouldStop = true;

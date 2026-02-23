@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { CONTAINER_IMAGE, CONTAINER_NAME, createBitclawPaths, ensureBitclawDirs, ensureWorkspaceAgentFile, type BitclawPaths } from './config.js';
+import { buildMountFlags, loadConfig, resolveMcpServers } from './customisation.js';
 import { loadProjectEnv } from './env.js';
 
 export interface RuntimeStartResult {
@@ -31,6 +32,8 @@ export function startContainer(projectRoot: string): RuntimeStartResult {
   ensureBitclawDirs(paths);
   ensureWorkspaceAgentFile(paths);
 
+  const config = loadConfig(projectRoot);
+
   buildContainerImage(projectRoot);
   stopContainer();
 
@@ -41,11 +44,15 @@ export function startContainer(projectRoot: string): RuntimeStartResult {
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
     secrets.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
   }
-  const bootstrap = JSON.stringify({ secrets });
+
+  const mcpServers = resolveMcpServers(config.mcpServers);
+  const bootstrap = JSON.stringify({ secrets, mcpServers });
 
   const logFile = path.join(paths.logsDir, 'container.log');
   const logStream = fs.createWriteStream(logFile, { flags: 'a' });
   logStream.write(`\n--- container start ${new Date().toISOString()} ---\n`);
+
+  const extraMounts = buildMountFlags(config.mounts);
 
   const run = spawn(
     'docker',
@@ -62,6 +69,7 @@ export function startContainer(projectRoot: string): RuntimeStartResult {
         `${paths.workspaceDir}:/workspace/workspace`,
         `${paths.sessionsDir}:/home/node/.claude`,
       ].flatMap((mount) => ['-v', mount]),
+      ...extraMounts,
       CONTAINER_IMAGE,
     ],
     {
