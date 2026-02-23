@@ -27,7 +27,6 @@ Lightweight AI agent that runs Claude in a Docker container, communicating via f
 ## Coding Rules
 
 - Prefer clarity and reliability over clever abstractions.
-- Total project source code under 1k LOC.
 - Aggressively apply DRY — guard all code from repetitions.
 - Write clean, simple TypeScript. Don't overengineer.
 - Unit test the code you write. Use dependency injection where necessary.
@@ -39,7 +38,6 @@ Lightweight AI agent that runs Claude in a Docker container, communicating via f
 
 - Make focused, minimal diffs.
 - Do not revert unrelated user changes.
-- For DB schema changes: implement schema/code, then ask user to run migrations manually.
 - For new env vars: update `.env.example` with clear comments and add validation in env schema code.
 
 ## Development

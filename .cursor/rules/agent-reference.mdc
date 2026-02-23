@@ -1,7 +1,0 @@
----
-alwaysApply: true
-description: Core agent rules reference
----
-# Agent Rules Reference
-
-Follow the repository-wide agent rules in [CLAUDE.md](mdc:CLAUDE.md).
