@@ -33,21 +33,32 @@ test('formatOutboundEvent formats result and error events', () => {
       error: 'boom',
       timestamp: new Date().toISOString(),
     }),
-    '[agent:error] boom',
+    '[error] boom',
   );
 });
 
-test('formatOutboundEvent formats tool_call and mcp metadata', () => {
-  const line = formatOutboundEvent({
-    type: 'tool_call',
-    toolName: 'mcp__nanoclaw__send_message',
-    isMcp: true,
-    mcpServer: 'nanoclaw',
-    mcpTool: 'send_message',
-    toolUseId: 'toolu_123',
-    timestamp: new Date().toISOString(),
-  });
-  assert.match(line, /\[tool:call\] \[mcp:nanoclaw\/send_message\]/);
-  assert.match(line, /id=toolu_123/);
-  assert.doesNotMatch(line, /input=/);
+test('formatOutboundEvent returns message text directly', () => {
+  assert.equal(
+    formatOutboundEvent({
+      type: 'message',
+      text: 'Working on it...',
+      timestamp: new Date().toISOString(),
+    }),
+    'Working on it...',
+  );
+});
+
+test('formatOutboundEvent returns null for tool_call events', () => {
+  assert.equal(
+    formatOutboundEvent({
+      type: 'tool_call',
+      toolName: 'mcp__nanoclaw__send_message',
+      isMcp: true,
+      mcpServer: 'nanoclaw',
+      mcpTool: 'send_message',
+      toolUseId: 'toolu_123',
+      timestamp: new Date().toISOString(),
+    }),
+    null,
+  );
 });

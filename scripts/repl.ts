@@ -15,7 +15,8 @@ function startBackgroundPoller(paths: BitclawPaths): { stop: () => void } {
     while (running) {
       try {
         await receiveFromAgent(paths, async (event) => {
-          console.log(formatOutboundEvent(event));
+          const text = formatOutboundEvent(event);
+          if (text) console.log(text);
         });
       } catch {
         // Swallow transient FS errors; poller will retry next tick.

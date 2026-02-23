@@ -1,28 +1,26 @@
 import { OutboundEnvelope } from './types.js';
 
-export function formatOutboundEvent(event: OutboundEnvelope): string {
+/**
+ * Format an outbound event for display. Returns null for events that
+ * should not be forwarded to channels (e.g. internal tool_call telemetry).
+ */
+export function formatOutboundEvent(event: OutboundEnvelope): string | null {
   if (event.type === 'result') {
     const status = String(event.status ?? 'unknown');
     if (status === 'error') {
-      return `[agent:error] ${String(event.error ?? 'Unknown error')}`;
+      return `[error] ${String(event.error ?? 'Unknown error')}`;
     }
     return String(event.result ?? '').trimEnd();
   }
 
   if (event.type === 'message') {
-    const sender = event.sender ? `${String(event.sender)}: ` : '';
-    return `[tool:message] ${sender}${String(event.text ?? '')}`;
+    return String(event.text ?? '');
   }
 
+  // tool_call events are internal telemetry — don't forward to channels
   if (event.type === 'tool_call') {
-    const toolName = String(event.toolName ?? 'unknown');
-    const toolUseId = event.toolUseId ? ` id=${String(event.toolUseId)}` : '';
-    const isMcp = Boolean(event.isMcp);
-    const mcpPrefix = isMcp
-      ? `[mcp:${String(event.mcpServer ?? 'unknown')}/${String(event.mcpTool ?? toolName)}] `
-      : '';
-    return `[tool:call] ${mcpPrefix}${toolName}${toolUseId}`;
+    return null;
   }
 
-  return `[tool:${event.type}] ${JSON.stringify(event)}`;
+  return null;
 }

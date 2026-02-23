@@ -35,16 +35,14 @@ const server = new McpServer({
 
 server.tool(
   'send_message',
-  'Send a message to the user immediately.',
+  'Send an intermediate progress update to the user while you are still working. Use this ONLY for sharing reasoning, status updates, or partial results mid-task. Do NOT use this for your final answer — your final response text is automatically delivered to the user.',
   {
-    text: z.string().describe('The message text to send'),
-    sender: z.string().optional().describe('Optional sender label'),
+    text: z.string().describe('The progress/status message text to send'),
   },
   async (args) => {
     sendEventToHost({
       type: 'message',
       text: args.text,
-      sender: args.sender,
       timestamp: new Date().toISOString(),
     });
     return { content: [{ type: 'text' as const, text: 'Message sent.' }] };

@@ -76,7 +76,7 @@ export class Orchestrator {
       try {
         await receiveFromAgent(this.paths!, async (event) => {
           const text = formatOutboundEvent(event);
-          await this.channel.send(text);
+          if (text) await this.channel.send(text);
         });
       } catch {
         // Swallow transient FS errors; retry next tick.
