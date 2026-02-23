@@ -187,9 +187,6 @@ Start again after stop:
 Uninstall service:
   launchctl bootout gui/$(id -u)/com.bitclaw
   rm ~/Library/LaunchAgents/com.bitclaw.plist
-
-Interactive chat (without Telegram):
-  npm run chat
 ```
 
 ## Troubleshooting

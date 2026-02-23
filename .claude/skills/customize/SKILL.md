@@ -224,7 +224,6 @@ tail -f ~/.bitclaw/logs/container.log
 | Slack | `@anthropic-ai/slack-mcp` | `SLACK_BOT_TOKEN` |
 | Notion | `@anthropic-ai/notion-mcp` | `NOTION_API_KEY` |
 | GitHub | `@anthropic-ai/github-mcp` | `GITHUB_TOKEN` |
-| Filesystem | `@anthropic-ai/filesystem-mcp` | (none — uses args for paths) |
 
 If you don't know the package name, search the web for `"<service> mcp server npm"` to find it.
 
