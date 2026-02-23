@@ -7,6 +7,7 @@
     "container:build": "tsx scripts/build-container.ts",
     "container:start": "tsx scripts/start-container.ts",
     "container:stop": "tsx scripts/stop-container.ts",
+    "chat": "tsx scripts/repl.ts",
     "ipc:send": "tsx scripts/send-ipc.ts",
     "ipc:poll": "tsx scripts/poll-outbound.ts",
     "test": "tsx --test src/**/*.spec.ts"

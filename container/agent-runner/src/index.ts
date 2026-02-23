@@ -32,9 +32,25 @@ interface BootstrapInput {
 const POLL_MS = Number(process.env.BITCLAW_IPC_POLL_MS ?? 400);
 const WORKSPACE_DIR = '/workspace/workspace';
 const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+const SESSION_STATE_FILE = '/home/node/.claude/bitclaw-session.json';
 
 let sessionId: string | undefined;
 let resumeAt: string | undefined;
+
+interface SessionState {
+  sessionId?: string;
+  resumeAt?: string;
+  updatedAt: string;
+}
+
+interface ToolCallEvent {
+  toolName: string;
+  toolUseId?: string;
+  toolInput?: unknown;
+  isMcp: boolean;
+  mcpServer?: string;
+  mcpTool?: string;
+}
 
 function log(message: string): void {
   console.error(`[bitclaw-agent-runner] ${message}`);
@@ -93,6 +109,93 @@ function buildSdkEnv(secrets: Record<string, string>): Record<string, string | u
   return sdkEnv;
 }
 
+function loadSessionState(): void {
+  try {
+    if (!fs.existsSync(SESSION_STATE_FILE)) return;
+    const raw = fs.readFileSync(SESSION_STATE_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as SessionState;
+    if (typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0) {
+      sessionId = parsed.sessionId;
+    }
+    if (typeof parsed.resumeAt === 'string' && parsed.resumeAt.length > 0) {
+      resumeAt = parsed.resumeAt;
+    }
+    if (sessionId || resumeAt) {
+      log(`Loaded persistent session state (sessionId: ${sessionId ? 'yes' : 'no'}, resumeAt: ${resumeAt ? 'yes' : 'no'})`);
+    }
+  } catch (err) {
+    log(`Failed to load session state: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+function saveSessionState(): void {
+  try {
+    fs.mkdirSync(path.dirname(SESSION_STATE_FILE), { recursive: true });
+    const payload: SessionState = {
+      sessionId,
+      resumeAt,
+      updatedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(SESSION_STATE_FILE, JSON.stringify(payload, null, 2));
+  } catch (err) {
+    log(`Failed to save session state: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+function parseMcpToolName(toolName: string): { isMcp: boolean; mcpServer?: string; mcpTool?: string } {
+  if (!toolName.startsWith('mcp__')) {
+    return { isMcp: false };
+  }
+
+  const parts = toolName.split('__');
+  if (parts.length < 3) {
+    return { isMcp: true };
+  }
+
+  return {
+    isMcp: true,
+    mcpServer: parts[1],
+    mcpTool: parts.slice(2).join('__'),
+  };
+}
+
+function extractToolCalls(message: unknown): ToolCallEvent[] {
+  const msg = message as Record<string, unknown>;
+  const results: ToolCallEvent[] = [];
+
+  const pushToolCall = (name: unknown, input: unknown, id: unknown): void => {
+    if (typeof name !== 'string' || name.length === 0) return;
+    const mcp = parseMcpToolName(name);
+    results.push({
+      toolName: name,
+      toolUseId: typeof id === 'string' ? id : undefined,
+      toolInput: input,
+      isMcp: mcp.isMcp,
+      mcpServer: mcp.mcpServer,
+      mcpTool: mcp.mcpTool,
+    });
+  };
+
+  if (msg.type === 'assistant') {
+    const assistantMessage = msg.message as Record<string, unknown> | undefined;
+    const content = assistantMessage?.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        const typed = block as Record<string, unknown>;
+        if (typed.type === 'tool_use') {
+          pushToolCall(typed.name, typed.input, typed.id);
+        }
+      }
+    }
+  }
+
+  if (msg.type === 'tool_use') {
+    pushToolCall(msg.name, msg.input, msg.id);
+  }
+
+  return results;
+}
+
 async function runClaudeQuery(
   prompt: string,
   sdkEnv: Record<string, string | undefined>,
@@ -145,11 +248,27 @@ async function runClaudeQuery(
       },
     },
   })) {
+    const toolCalls = extractToolCalls(message);
+    for (const toolCall of toolCalls) {
+      writeOutbound({
+        type: 'tool_call',
+        toolName: toolCall.toolName,
+        toolUseId: toolCall.toolUseId,
+        toolInput: toolCall.toolInput,
+        isMcp: toolCall.isMcp,
+        mcpServer: toolCall.mcpServer,
+        mcpTool: toolCall.mcpTool,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     if (message.type === 'system' && message.subtype === 'init' && !isolated) {
       sessionId = message.session_id;
+      saveSessionState();
     }
     if (message.type === 'assistant' && 'uuid' in message && !isolated) {
       resumeAt = message.uuid;
+      saveSessionState();
     }
     if (message.type === 'result') {
       latestResult = 'result' in message && typeof message.result === 'string'
@@ -163,6 +282,10 @@ async function runClaudeQuery(
         timestamp: new Date().toISOString(),
       });
     }
+  }
+
+  if (!isolated) {
+    saveSessionState();
   }
 }
 
@@ -214,6 +337,7 @@ async function main(): Promise<void> {
   const stdin = await readBootstrapFromStdin();
   const bootstrap: BootstrapInput = stdin.trim() ? JSON.parse(stdin) : {};
   const sdkEnv = buildSdkEnv(bootstrap.secrets ?? {});
+  loadSessionState();
 
   let shouldStop = false;
   while (!shouldStop) {

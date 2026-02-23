@@ -3,6 +3,7 @@ export type InboundType = 'messages' | 'task' | 'heartbeat' | 'shutdown';
 export type OutboundType =
   | 'result'
   | 'message'
+  | 'tool_call'
   | 'schedule_task'
   | 'pause_task'
   | 'resume_task'

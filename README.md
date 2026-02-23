@@ -42,6 +42,18 @@ This builds and runs one container with mounts:
 
 ## Interact via IPC
 
+Interactive REPL (starts/restarts container each run):
+
+```bash
+npm run chat
+```
+
+Inside chat:
+
+- `/help` for commands
+- `/restart` to restart container
+- `/exit` to quit (and stop container)
+
 Send inbound message:
 
 ```bash
