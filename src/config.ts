@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -34,7 +35,30 @@ export function createBitclawPaths(homeDir = resolveBitclawHomeDir()): BitclawPa
   };
 }
 
+const DEFAULT_AGENT_MD = `# Bitclaw Agent Workspace
+
+This file customizes the container agent behavior for this instance.
+
+- Keep behavior lightweight.
+- Keep behavior unit tested.
+`;
+
+export function ensureBitclawDirs(paths: BitclawPaths): void {
+  for (const dir of Object.values(paths)) {
+    if (dir !== paths.homeDir) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  }
+}
+
+export function ensureWorkspaceAgentFile(paths: BitclawPaths): string {
+  const agentMdPath = path.join(paths.workspaceDir, 'AGENT.md');
+  if (!fs.existsSync(agentMdPath)) {
+    fs.writeFileSync(agentMdPath, DEFAULT_AGENT_MD, 'utf8');
+  }
+  return agentMdPath;
+}
+
 export const CONTAINER_IMAGE = process.env.BITCLAW_CONTAINER_IMAGE ?? 'bitclaw-agent:dev';
 export const CONTAINER_NAME = process.env.BITCLAW_CONTAINER_NAME ?? 'bitclaw-agent';
 export const IPC_POLL_MS = Number(process.env.BITCLAW_IPC_POLL_MS ?? 400);
-

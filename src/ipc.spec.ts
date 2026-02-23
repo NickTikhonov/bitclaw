@@ -4,26 +4,26 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createBitclawPaths } from './config.js';
-import { buildIpcFilename, pollOutbound, sendInbound, writeJsonAtomic } from './ipc.js';
+import { createMessageFilename, receiveFromAgent, sendToAgent, writeMessageAtomic } from './ipc.js';
 
 function mkTempPaths() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bitclaw-test-'));
   return createBitclawPaths(tempDir);
 }
 
-test('buildIpcFilename uses unix_direction_rand7 format', () => {
-  const file = buildIpcFilename('in', 1739859452);
+test('createMessageFilename uses unix_direction_rand7 format', () => {
+  const file = createMessageFilename('in', 1739859452);
   assert.match(file, /^1739859452_in_[a-z0-9]{7}\.json$/);
 });
 
-test('sendInbound writes one inbound file with payload', () => {
+test('sendToAgent writes one inbound file with payload', () => {
   const paths = mkTempPaths();
   const payload = {
     type: 'messages' as const,
     text: 'hello',
     timestamp: new Date().toISOString(),
   };
-  const writtenPath = sendInbound(paths, payload);
+  const writtenPath = sendToAgent(paths, payload);
 
   assert.ok(fs.existsSync(writtenPath));
   const parsed = JSON.parse(fs.readFileSync(writtenPath, 'utf8')) as { type: string; text: string };
@@ -32,12 +32,12 @@ test('sendInbound writes one inbound file with payload', () => {
   assert.equal(fs.readdirSync(paths.ipcInboundDir).length, 1);
 });
 
-test('pollOutbound archives successful events', async () => {
+test('receiveFromAgent archives successful events', async () => {
   const paths = mkTempPaths();
   fs.mkdirSync(paths.ipcOutboundDir, { recursive: true });
   fs.mkdirSync(paths.ipcArchiveDir, { recursive: true });
 
-  writeJsonAtomic(paths.ipcOutboundDir, '1739859455_out_abc1234.json', {
+  writeMessageAtomic(paths.ipcOutboundDir, '1739859455_out_abc1234.json', {
     type: 'result',
     status: 'success',
     result: 'ok',
@@ -45,7 +45,7 @@ test('pollOutbound archives successful events', async () => {
   });
 
   let called = 0;
-  const result = await pollOutbound(paths, async () => {
+  const result = await receiveFromAgent(paths, async () => {
     called += 1;
   });
 
@@ -56,17 +56,17 @@ test('pollOutbound archives successful events', async () => {
   assert.equal(fs.readdirSync(paths.ipcArchiveDir).length, 1);
 });
 
-test('pollOutbound archives parse errors with error_ prefix', async () => {
+test('receiveFromAgent archives parse errors with original filename', async () => {
   const paths = mkTempPaths();
   fs.mkdirSync(paths.ipcOutboundDir, { recursive: true });
   fs.mkdirSync(paths.ipcArchiveDir, { recursive: true });
   fs.writeFileSync(path.join(paths.ipcOutboundDir, '1739859455_out_bad0001.json'), '{not-json');
 
-  const result = await pollOutbound(paths, async () => undefined);
+  const result = await receiveFromAgent(paths, async () => undefined);
 
   assert.equal(result.processed, 0);
   assert.equal(result.errors, 1);
   const archived = fs.readdirSync(paths.ipcArchiveDir);
   assert.equal(archived.length, 1);
-  assert.match(archived[0], /^error_1739859455_out_bad0001\.json$/);
+  assert.equal(archived[0], '1739859455_out_bad0001.json');
 });

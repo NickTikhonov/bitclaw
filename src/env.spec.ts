@@ -34,4 +34,3 @@ test('loadProjectEnv does not override existing env vars', () => {
 
   assert.equal(process.env.ANTHROPIC_API_KEY, 'from_shell');
 });
-

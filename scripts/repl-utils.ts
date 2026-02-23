@@ -1,4 +1,4 @@
-import { OutboundEnvelope } from './types/ipc.js';
+import { OutboundEnvelope } from '../src/types.js';
 
 export function isExitCommand(input: string): boolean {
   const normalized = input.trim().toLowerCase();
@@ -34,28 +34,8 @@ export function formatOutboundEvent(event: OutboundEnvelope): string {
     const mcpPrefix = isMcp
       ? `[mcp:${String(event.mcpServer ?? 'unknown')}/${String(event.mcpTool ?? toolName)}] `
       : '';
-    const input = event.toolInput;
-    const inputPreview = input == null
-      ? ''
-      : ` input=${JSON.stringify(input).slice(0, 220)}`;
-    return `[tool:call] ${mcpPrefix}${toolName}${toolUseId}${inputPreview}`;
+    return `[tool:call] ${mcpPrefix}${toolName}${toolUseId}`;
   }
 
   return `[tool:${event.type}] ${JSON.stringify(event)}`;
 }
-
-export function shouldStopWaitingForTurn(params: {
-  startMs: number;
-  nowMs: number;
-  firstResponseMs: number | null;
-  lastResponseMs: number | null;
-  maxWaitMs: number;
-  settleAfterMs: number;
-}): boolean {
-  const elapsed = params.nowMs - params.startMs;
-  if (elapsed >= params.maxWaitMs) return true;
-
-  if (params.firstResponseMs == null || params.lastResponseMs == null) return false;
-  return params.nowMs - params.lastResponseMs >= params.settleAfterMs;
-}
-

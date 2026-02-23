@@ -45,6 +45,3 @@ export interface OutboundEnvelope {
   timestamp: string;
   [key: string]: unknown;
 }
-
-export type Direction = 'in' | 'out';
-

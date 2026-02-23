@@ -1,22 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { BitclawPaths } from './config.js';
-import { Direction, InboundEnvelope, OutboundEnvelope } from './types/ipc.js';
+import { InboundEnvelope, OutboundEnvelope } from './types.js';
 
-export interface PollResult {
-  processed: number;
-  errors: number;
+export function createMessageFilename(direction: 'in' | 'out', unixSeconds = Math.floor(Date.now() / 1000)): string {
+  const rand7 = Math.random().toString(36).slice(2, 9).padEnd(7, '0').slice(0, 7);
+  return `${unixSeconds}_${direction}_${rand7}.json`;
 }
 
-export function random7(): string {
-  return Math.random().toString(36).slice(2, 9).padEnd(7, '0').slice(0, 7);
-}
-
-export function buildIpcFilename(direction: Direction, unixSeconds = Math.floor(Date.now() / 1000)): string {
-  return `${unixSeconds}_${direction}_${random7()}.json`;
-}
-
-export function writeJsonAtomic(targetDir: string, fileName: string, payload: unknown): string {
+export function writeMessageAtomic(targetDir: string, fileName: string, payload: unknown): string {
   fs.mkdirSync(targetDir, { recursive: true });
   const finalPath = path.join(targetDir, fileName);
   const tmpPath = `${finalPath}.tmp`;
@@ -25,12 +17,7 @@ export function writeJsonAtomic(targetDir: string, fileName: string, payload: un
   return finalPath;
 }
 
-export function sendInbound(paths: BitclawPaths, payload: InboundEnvelope): string {
-  const filename = buildIpcFilename('in');
-  return writeJsonAtomic(paths.ipcInboundDir, filename, payload);
-}
-
-export function listJsonFilesSorted(targetDir: string): string[] {
+export function listMessagesSorted(targetDir: string): string[] {
   if (!fs.existsSync(targetDir)) return [];
   return fs
     .readdirSync(targetDir)
@@ -39,20 +26,29 @@ export function listJsonFilesSorted(targetDir: string): string[] {
     .map((file) => path.join(targetDir, file));
 }
 
-export function moveToArchive(paths: BitclawPaths, filePath: string, isError = false): string {
+export function archiveMessage(paths: BitclawPaths, filePath: string): string {
   fs.mkdirSync(paths.ipcArchiveDir, { recursive: true });
   const baseName = path.basename(filePath);
-  const archivedName = isError ? `error_${baseName}` : baseName;
-  const archivedPath = path.join(paths.ipcArchiveDir, archivedName);
+  const archivedPath = path.join(paths.ipcArchiveDir, baseName);
   fs.renameSync(filePath, archivedPath);
   return archivedPath;
 }
 
-export function pollOutbound(
+export interface PollResult {
+  processed: number;
+  errors: number;
+}
+
+export function sendToAgent(paths: BitclawPaths, payload: InboundEnvelope): string {
+  const filename = createMessageFilename('in');
+  return writeMessageAtomic(paths.ipcInboundDir, filename, payload);
+}
+
+export function receiveFromAgent(
   paths: BitclawPaths,
   onEvent: (event: OutboundEnvelope) => void | Promise<void>,
 ): Promise<PollResult> {
-  const files = listJsonFilesSorted(paths.ipcOutboundDir);
+  const files = listMessagesSorted(paths.ipcOutboundDir);
   let processed = 0;
   let errors = 0;
 
@@ -61,10 +57,10 @@ export function pollOutbound(
       try {
         const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as OutboundEnvelope;
         await onEvent(parsed);
-        moveToArchive(paths, filePath);
+        archiveMessage(paths, filePath);
         processed += 1;
       } catch {
-        moveToArchive(paths, filePath, true);
+        archiveMessage(paths, filePath);
         errors += 1;
       }
     }

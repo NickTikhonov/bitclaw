@@ -1,6 +1,6 @@
 import { createBitclawPaths } from '../src/config.js';
-import { sendInbound } from '../src/ipc.js';
-import { InboundEnvelope } from '../src/types/ipc.js';
+import { sendToAgent } from '../src/ipc.js';
+import { InboundEnvelope } from '../src/types.js';
 
 const [, , typeArg = 'messages', ...rest] = process.argv;
 
@@ -27,6 +27,6 @@ if (typeArg === 'messages') {
   process.exit(1);
 }
 
-const filePath = sendInbound(paths, payload);
+const filePath = sendToAgent(paths, payload);
 console.log(filePath);
 

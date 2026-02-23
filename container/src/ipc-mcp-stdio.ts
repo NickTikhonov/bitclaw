@@ -4,7 +4,7 @@ import { z } from 'zod';
 import fs from 'node:fs';
 import path from 'node:path';
 import { CronExpressionParser } from 'cron-parser';
-import { writeOutbound } from './ipc-utils.js';
+import { sendEventToHost } from './ipc-utils.js';
 
 const TASKS_FILE = '/workspace/ipc/current_tasks.json';
 
@@ -21,7 +21,7 @@ server.tool(
     sender: z.string().optional().describe('Optional sender label'),
   },
   async (args) => {
-    writeOutbound({
+    sendEventToHost({
       type: 'message',
       text: args.text,
       sender: args.sender,
@@ -68,7 +68,7 @@ server.tool(
       }
     }
 
-    writeOutbound({
+    sendEventToHost({
       type: 'schedule_task',
       prompt: args.prompt,
       schedule_type: args.schedule_type,
@@ -112,7 +112,7 @@ server.tool(
   'Pause a scheduled task.',
   { task_id: z.string() },
   async (args) => {
-    writeOutbound({
+    sendEventToHost({
       type: 'pause_task',
       taskId: args.task_id,
       timestamp: new Date().toISOString(),
@@ -126,7 +126,7 @@ server.tool(
   'Resume a paused task.',
   { task_id: z.string() },
   async (args) => {
-    writeOutbound({
+    sendEventToHost({
       type: 'resume_task',
       taskId: args.task_id,
       timestamp: new Date().toISOString(),
@@ -140,7 +140,7 @@ server.tool(
   'Cancel and delete a scheduled task.',
   { task_id: z.string() },
   async (args) => {
-    writeOutbound({
+    sendEventToHost({
       type: 'cancel_task',
       taskId: args.task_id,
       timestamp: new Date().toISOString(),

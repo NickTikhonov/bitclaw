@@ -10,9 +10,9 @@ import {
   ARCHIVE_DIR,
   INBOUND_DIR,
   OUTBOUND_DIR,
-  archiveFile,
-  listInboundFilesSorted,
-  writeOutbound,
+  archiveMessage,
+  listInboundMessagesSorted,
+  sendEventToHost,
 } from './ipc-utils.js';
 
 type InboundType = 'messages' | 'task' | 'heartbeat' | 'shutdown';
@@ -29,7 +29,7 @@ interface BootstrapInput {
   secrets?: Record<string, string>;
 }
 
-const POLL_MS = Number(process.env.BITCLAW_IPC_POLL_MS ?? 400);
+const POLL_MS = 400;
 const WORKSPACE_DIR = '/workspace/workspace';
 const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
 const SESSION_STATE_FILE = '/home/node/.claude/bitclaw-session.json';
@@ -46,7 +46,6 @@ interface SessionState {
 interface ToolCallEvent {
   toolName: string;
   toolUseId?: string;
-  toolInput?: unknown;
   isMcp: boolean;
   mcpServer?: string;
   mcpTool?: string;
@@ -83,7 +82,7 @@ async function readBootstrapFromStdin(timeoutMs = 300): Promise<string> {
 }
 
 function createSanitizeBashHook(): HookCallback {
-  return async (input) => {
+  return async (input: unknown) => {
     const preInput = input as PreToolUseHookInput;
     const command = (preInput.tool_input as { command?: string })?.command;
     if (!command) return {};
@@ -163,13 +162,12 @@ function extractToolCalls(message: unknown): ToolCallEvent[] {
   const msg = message as Record<string, unknown>;
   const results: ToolCallEvent[] = [];
 
-  const pushToolCall = (name: unknown, input: unknown, id: unknown): void => {
+  const pushToolCall = (name: unknown, id: unknown): void => {
     if (typeof name !== 'string' || name.length === 0) return;
     const mcp = parseMcpToolName(name);
     results.push({
       toolName: name,
       toolUseId: typeof id === 'string' ? id : undefined,
-      toolInput: input,
       isMcp: mcp.isMcp,
       mcpServer: mcp.mcpServer,
       mcpTool: mcp.mcpTool,
@@ -183,14 +181,14 @@ function extractToolCalls(message: unknown): ToolCallEvent[] {
       for (const block of content) {
         const typed = block as Record<string, unknown>;
         if (typed.type === 'tool_use') {
-          pushToolCall(typed.name, typed.input, typed.id);
+          pushToolCall(typed.name, typed.id);
         }
       }
     }
   }
 
   if (msg.type === 'tool_use') {
-    pushToolCall(msg.name, msg.input, msg.id);
+    pushToolCall(msg.name, msg.id);
   }
 
   return results;
@@ -250,11 +248,10 @@ async function runClaudeQuery(
   })) {
     const toolCalls = extractToolCalls(message);
     for (const toolCall of toolCalls) {
-      writeOutbound({
+      sendEventToHost({
         type: 'tool_call',
         toolName: toolCall.toolName,
         toolUseId: toolCall.toolUseId,
-        toolInput: toolCall.toolInput,
         isMcp: toolCall.isMcp,
         mcpServer: toolCall.mcpServer,
         mcpTool: toolCall.mcpTool,
@@ -274,7 +271,7 @@ async function runClaudeQuery(
       latestResult = 'result' in message && typeof message.result === 'string'
         ? message.result
         : null;
-      writeOutbound({
+      sendEventToHost({
         type: 'result',
         status: 'success',
         result: latestResult,
@@ -341,25 +338,25 @@ async function main(): Promise<void> {
 
   let shouldStop = false;
   while (!shouldStop) {
-    const inboundFiles = listInboundFilesSorted();
+    const inboundFiles = listInboundMessagesSorted();
     for (const filePath of inboundFiles) {
       try {
         const payload = JSON.parse(fs.readFileSync(filePath, 'utf8')) as InboundEnvelope;
         const result = await processInbound(payload, sdkEnv);
-        archiveFile(filePath);
+        archiveMessage(filePath);
         if (result.shouldStop) {
           shouldStop = true;
           break;
         }
       } catch (err) {
-        writeOutbound({
+        sendEventToHost({
           type: 'result',
           status: 'error',
           error: err instanceof Error ? err.message : String(err),
           result: null,
           timestamp: new Date().toISOString(),
         });
-        archiveFile(filePath, true);
+        archiveMessage(filePath);
       }
     }
     if (!shouldStop) {

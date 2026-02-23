@@ -1,9 +1,9 @@
 import { createBitclawPaths } from '../src/config.js';
-import { pollOutbound } from '../src/ipc.js';
+import { receiveFromAgent } from '../src/ipc.js';
 
 const paths = createBitclawPaths();
 
-const result = await pollOutbound(paths, async (event) => {
+const result = await receiveFromAgent(paths, async (event) => {
   console.log(JSON.stringify(event, null, 2));
 });
 

@@ -1,77 +1,31 @@
-import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createBitclawPaths, IPC_POLL_MS } from '../src/config.js';
+import { IPC_POLL_MS, type BitclawPaths } from '../src/config.js';
 import { loadProjectEnv } from '../src/env.js';
-import { pollOutbound, sendInbound } from '../src/ipc.js';
-import {
-  formatOutboundEvent,
-  isExitCommand,
-  isHelpCommand,
-  isRestartCommand,
-  shouldStopWaitingForTurn,
-} from '../src/repl-utils.js';
+import { receiveFromAgent, sendToAgent } from '../src/ipc.js';
+import { restartContainer, stopContainer } from '../src/runtime.js';
+import { formatOutboundEvent, isExitCommand, isHelpCommand, isRestartCommand } from './repl-utils.js';
 
-const TURN_MAX_WAIT_MS = 90_000;
-const TURN_SETTLE_MS = 1_000;
+function startBackgroundPoller(paths: BitclawPaths): { stop: () => void } {
+  let running = true;
 
-function runNpmScript(script: string): void {
-  const result = spawnSync('npm', ['run', script], { stdio: 'inherit' });
-  if (result.status !== 0) {
-    throw new Error(`Failed running npm script: ${script}`);
-  }
-}
-
-async function waitForTurnResponses(): Promise<number> {
-  const paths = createBitclawPaths();
-  const startMs = Date.now();
-  let firstResponseMs: number | null = null;
-  let lastResponseMs: number | null = null;
-  let sawResult = false;
-  let count = 0;
-
-  while (true) {
-    await pollOutbound(paths, async (event) => {
-      count += 1;
-      const now = Date.now();
-      if (firstResponseMs == null) firstResponseMs = now;
-      lastResponseMs = now;
-      if (event.type === 'result') sawResult = true;
-      console.log(formatOutboundEvent(event));
-    });
-
-    const nowMs = Date.now();
-    const hardTimedOut = nowMs - startMs >= TURN_MAX_WAIT_MS;
-    if (hardTimedOut) {
-      break;
-    }
-
-    // Do not end a turn before a result arrives; tool_call events can precede
-    // the final result by several seconds for slower tools like WebFetch.
-    if (!sawResult) {
+  const poll = async () => {
+    while (running) {
+      try {
+        await receiveFromAgent(paths, async (event) => {
+          console.log(formatOutboundEvent(event));
+        });
+      } catch {
+        // Swallow transient FS errors; poller will retry next tick.
+      }
       await new Promise((resolve) => setTimeout(resolve, IPC_POLL_MS));
-      continue;
     }
+  };
 
-    if (
-      shouldStopWaitingForTurn({
-        startMs,
-        nowMs,
-        firstResponseMs,
-        lastResponseMs,
-        maxWaitMs: TURN_MAX_WAIT_MS,
-        settleAfterMs: TURN_SETTLE_MS,
-      })
-    ) {
-      break;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, IPC_POLL_MS));
-  }
-
-  return count;
+  poll();
+  return { stop: () => { running = false; } };
 }
 
 function printHelp(): void {
@@ -88,20 +42,18 @@ async function main(): Promise<void> {
   loadProjectEnv(projectRoot);
 
   console.log('Starting container...');
-  runNpmScript('container:start');
+  const started = restartContainer(projectRoot);
+  const paths = started.paths;
 
-  const paths = createBitclawPaths();
   // Flush any old outbound events so each run starts clean.
-  await pollOutbound(paths, async () => undefined);
+  await receiveFromAgent(paths, async () => undefined);
 
+  const poller = startBackgroundPoller(paths);
   const rl = createInterface({ input: stdin, output: stdout });
 
   const cleanup = () => {
-    try {
-      runNpmScript('container:stop');
-    } catch {
-      // Keep exit path simple; stop failures are not fatal for TUI shutdown.
-    }
+    poller.stop();
+    try { stopContainer(); } catch { /* not fatal */ }
   };
 
   process.on('SIGINT', () => {
@@ -125,23 +77,18 @@ async function main(): Promise<void> {
       }
       if (isRestartCommand(trimmed)) {
         console.log('Restarting container...');
-        runNpmScript('container:start');
+        restartContainer(projectRoot);
         continue;
       }
       if (isExitCommand(trimmed)) {
         break;
       }
 
-      sendInbound(paths, {
+      sendToAgent(paths, {
         type: 'messages',
         text: trimmed,
         timestamp: new Date().toISOString(),
       });
-
-      const count = await waitForTurnResponses();
-      if (count === 0) {
-        console.log('[agent] (no response yet)');
-      }
     }
   } finally {
     rl.close();
@@ -152,4 +99,3 @@ main().catch((err) => {
   console.error(`[chat] ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 });
-
