@@ -1,10 +1,4 @@
 {
   "mcpServers": {},
-  "mounts": [
-    {
-      "host": "/Users/nick/obsidian/agent-vault",
-      "container": "/workspace/extra/obsidian",
-      "readonly": false
-    }
-  ]
+  "mounts": []
 }
