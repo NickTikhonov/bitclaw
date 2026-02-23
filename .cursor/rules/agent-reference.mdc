@@ -4,4 +4,4 @@ description: Core agent rules reference
 ---
 # Agent Rules Reference
 
-Follow the repository-wide agent rules in [AGENT.md](mdc:AGENT.md).
+Follow the repository-wide agent rules in [CLAUDE.md](mdc:CLAUDE.md).

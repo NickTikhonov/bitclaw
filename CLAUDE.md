@@ -1,6 +1,6 @@
 # BitClaw
 
-Lightweight AI agent that runs Claude in a Docker container, communicating via filesystem IPC. Messages routed through Telegram. See [README.md](README.md) for usage and [AGENT.md](AGENT.md) for coding rules.
+Lightweight AI agent that runs Claude in a Docker container, communicating via filesystem IPC. Messages routed through Telegram. See [README.md](README.md) for usage.
 
 ## Key Files
 
@@ -23,6 +23,24 @@ Lightweight AI agent that runs Claude in a Docker container, communicating via f
 |-------|-------------|
 | `/setup` | First-time installation: Node, Docker, Telegram bot, API keys, container build |
 | `/customize` | Add MCP integrations (Gmail, Calendar, etc.) or expose extra folders to the agent |
+
+## Coding Rules
+
+- Prefer clarity and reliability over clever abstractions.
+- Total project source code under 1k LOC.
+- Aggressively apply DRY — guard all code from repetitions.
+- Write clean, simple TypeScript. Don't overengineer.
+- Unit test the code you write. Use dependency injection where necessary.
+- Unit tests colocated with code, named `*.spec.ts`.
+- Keep functions small and explicit; avoid hidden side effects.
+- Add short comments only where logic is non-obvious.
+
+## Change Workflow
+
+- Make focused, minimal diffs.
+- Do not revert unrelated user changes.
+- For DB schema changes: implement schema/code, then ask user to run migrations manually.
+- For new env vars: update `.env.example` with clear comments and add validation in env schema code.
 
 ## Development
 
