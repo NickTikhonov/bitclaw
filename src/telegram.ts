@@ -32,7 +32,7 @@ export class TelegramChannel implements Channel {
   }
 
   async send(text: string): Promise<void> {
-    this.cancelTyping();
+    this.setTyping(false);
 
     // If there's an active status message, replace it with the final text
     if (this.statusMessageId) {
@@ -50,7 +50,7 @@ export class TelegramChannel implements Channel {
           await this.bot.api.editMessageText(
             this.chatId,
             msgId,
-            text.slice(0, MAX_MSG_LENGTH),
+            chunkString(text, MAX_MSG_LENGTH)[0],
           );
         } catch {
           // Edit failed entirely — send a new message instead
@@ -68,13 +68,14 @@ export class TelegramChannel implements Channel {
       return;
     }
 
-    // No status message — send normally
+    // No status message — sendNew uses sendMessage which clears typing naturally
     await this.sendNew(text);
   }
 
   setTyping(active: boolean): void {
     if (active) {
-      if (this.typingInterval) return;
+      // Don't show typing indicator when a status message is already visible
+      if (this.typingInterval || this.statusMessageId) return;
       this.bot.api.sendChatAction(this.chatId, 'typing').catch(() => {});
       this.typingInterval = setInterval(() => {
         this.bot.api.sendChatAction(this.chatId, 'typing').catch(() => {});
@@ -93,6 +94,10 @@ export class TelegramChannel implements Channel {
         .editMessageText(this.chatId, this.statusMessageId, text)
         .catch(() => {});
     } else {
+      // Stop typing interval — the status message replaces the typing indicator.
+      // sendMessage below clears Telegram's typing indicator naturally.
+      this.setTyping(false);
+
       this.bot.api
         .sendMessage(this.chatId, text)
         .then((msg) => {
@@ -111,23 +116,6 @@ export class TelegramChannel implements Channel {
     await this.bot.stop();
   }
 
-  /**
-   * Stop the typing interval AND force-clear Telegram's typing indicator.
-   * Telegram only clears "typing..." when a new message arrives from the bot,
-   * so we send a silent dummy message and immediately delete it.
-   */
-  private cancelTyping(): void {
-    if (!this.typingInterval) return;
-    clearInterval(this.typingInterval);
-    this.typingInterval = null;
-
-    // Send + delete a silent message to force-clear the typing indicator
-    this.bot.api
-      .sendMessage(this.chatId, '…', { disable_notification: true })
-      .then((msg) => this.bot.api.deleteMessage(this.chatId, msg.message_id).catch(() => {}))
-      .catch(() => {});
-  }
-
   private async sendNew(text: string): Promise<void> {
     const formatted = telegramifyMarkdown(text, 'escape');
     const chunks = chunkString(formatted, MAX_MSG_LENGTH);
@@ -144,7 +132,7 @@ export class TelegramChannel implements Channel {
     } catch {
       await this.bot.api.sendMessage(
         this.chatId,
-        plainFallback.slice(0, MAX_MSG_LENGTH),
+        chunkString(plainFallback, MAX_MSG_LENGTH)[0],
       );
     }
   }
