@@ -27,7 +27,16 @@ export BITCLAW_HOME=~/.bitclaw-dev-1
 ## Run
 
 ```bash
-npm start
+nohup npm start >> ~/.bitclaw/logs/app.log 2>&1 &
+echo $! > ~/.bitclaw/bitclaw.pid
+```
+
+Stop / restart:
+
+```bash
+kill $(cat ~/.bitclaw/bitclaw.pid) 2>/dev/null
+nohup npm start >> ~/.bitclaw/logs/app.log 2>&1 &
+echo $! > ~/.bitclaw/bitclaw.pid
 ```
 
 This starts the main process which:
@@ -57,16 +66,9 @@ Inside chat: `/help`, `/restart`, `/exit`.
 
 ## Logs
 
-Container stdout/stderr are appended to:
-
-```
-~/.bitclaw/logs/container.log
-```
-
-Tail live:
-
 ```bash
-tail -f ~/.bitclaw/logs/container.log
+tail -f ~/.bitclaw/logs/app.log        # host orchestrator
+tail -f ~/.bitclaw/logs/container.log   # agent container
 ```
 
 ## IPC filenames

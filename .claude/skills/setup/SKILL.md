@@ -142,16 +142,37 @@ Re-run `./.claude/skills/setup/scripts/01-preflight.sh` and confirm all values a
 
 **If any are still false**, go back and fix the relevant step.
 
-**If all pass:** Tell the user setup is complete. Show them:
+**If all pass:** Start BitClaw in the background:
+
+```bash
+mkdir -p ~/.bitclaw/logs
+nohup npm start >> ~/.bitclaw/logs/app.log 2>&1 &
+echo $! > ~/.bitclaw/bitclaw.pid
+```
+
+Verify it's running:
+```bash
+tail -5 ~/.bitclaw/logs/app.log
+```
+
+You should see `Bitclaw running. Listening for Telegram messages.`
+
+Tell the user:
 
 ```
-✅ BitClaw is ready!
+✅ BitClaw is running!
 
-Start it with:
-  npm start
+View logs:
+  tail -f ~/.bitclaw/logs/app.log        # host orchestrator
+  tail -f ~/.bitclaw/logs/container.log   # agent container
 
-View container logs:
-  tail -f ~/.bitclaw/logs/container.log
+Stop it:
+  kill $(cat ~/.bitclaw/bitclaw.pid)
+
+Restart it:
+  kill $(cat ~/.bitclaw/bitclaw.pid) 2>/dev/null
+  nohup npm start >> ~/.bitclaw/logs/app.log 2>&1 &
+  echo $! > ~/.bitclaw/bitclaw.pid
 
 Interactive chat (without Telegram):
   npm run chat
