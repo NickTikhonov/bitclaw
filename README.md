@@ -24,22 +24,30 @@ Optional instance isolation:
 export BITCLAW_HOME=~/.bitclaw-dev-1
 ```
 
-## Run
+## Run (macOS service)
+
+Install as a LaunchAgent (auto-starts at login, auto-restarts on crash):
 
 ```bash
-nohup npm start >> ~/.bitclaw/logs/app.log 2>&1 &
-echo $! > ~/.bitclaw/bitclaw.pid
+./.claude/skills/setup/scripts/02-install-service.sh
 ```
 
-Stop / restart:
+Manage the service:
 
 ```bash
-kill $(cat ~/.bitclaw/bitclaw.pid) 2>/dev/null
-nohup npm start >> ~/.bitclaw/logs/app.log 2>&1 &
-echo $! > ~/.bitclaw/bitclaw.pid
+launchctl list | grep bitclaw                                  # status
+launchctl kickstart -k gui/$(id -u)/com.bitclaw                # restart
+launchctl bootout gui/$(id -u)/com.bitclaw                     # stop
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.bitclaw.plist  # start
 ```
 
-This starts the main process which:
+Or run in the foreground for debugging:
+
+```bash
+npm start
+```
+
+The main process:
 
 - Builds and starts the agent container
 - Listens for Telegram messages and routes them to the container via IPC
@@ -67,8 +75,9 @@ Inside chat: `/help`, `/restart`, `/exit`.
 ## Logs
 
 ```bash
-tail -f ~/.bitclaw/logs/app.log        # host orchestrator
-tail -f ~/.bitclaw/logs/container.log   # agent container
+tail -f ~/.bitclaw/logs/app.log          # host orchestrator
+tail -f ~/.bitclaw/logs/app.error.log    # host errors
+tail -f ~/.bitclaw/logs/container.log    # agent container
 ```
 
 ## IPC filenames

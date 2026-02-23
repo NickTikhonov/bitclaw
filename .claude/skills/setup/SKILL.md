@@ -142,15 +142,21 @@ Re-run `./.claude/skills/setup/scripts/01-preflight.sh` and confirm all values a
 
 **If any are still false**, go back and fix the relevant step.
 
-**If all pass:** Start BitClaw in the background:
+**If all pass:** Install BitClaw as a background service:
 
-```bash
-mkdir -p ~/.bitclaw/logs
-nohup npm start >> ~/.bitclaw/logs/app.log 2>&1 &
-echo $! > ~/.bitclaw/bitclaw.pid
-```
+Run `./.claude/skills/setup/scripts/02-install-service.sh` and parse the structured output.
+
+This installs a macOS LaunchAgent that:
+- Starts BitClaw automatically at login
+- Keeps it alive (auto-restarts on crash)
+- Logs to `~/.bitclaw/logs/app.log` and `~/.bitclaw/logs/app.error.log`
 
 Verify it's running:
+```bash
+launchctl list | grep bitclaw
+```
+
+A `0` exit status in the output means it's running. Wait a few seconds, then check logs:
 ```bash
 tail -5 ~/.bitclaw/logs/app.log
 ```
@@ -160,19 +166,27 @@ You should see `Bitclaw running. Listening for Telegram messages.`
 Tell the user:
 
 ```
-✅ BitClaw is running!
+✅ BitClaw is installed and running!
+
+It will start automatically at login and restart if it crashes.
 
 View logs:
-  tail -f ~/.bitclaw/logs/app.log        # host orchestrator
-  tail -f ~/.bitclaw/logs/container.log   # agent container
+  tail -f ~/.bitclaw/logs/app.log          # host orchestrator
+  tail -f ~/.bitclaw/logs/app.error.log    # host errors
+  tail -f ~/.bitclaw/logs/container.log    # agent container
 
-Stop it:
-  kill $(cat ~/.bitclaw/bitclaw.pid)
+Restart:
+  launchctl kickstart -k gui/$(id -u)/com.bitclaw
 
-Restart it:
-  kill $(cat ~/.bitclaw/bitclaw.pid) 2>/dev/null
-  nohup npm start >> ~/.bitclaw/logs/app.log 2>&1 &
-  echo $! > ~/.bitclaw/bitclaw.pid
+Stop:
+  launchctl bootout gui/$(id -u)/com.bitclaw
+
+Start again after stop:
+  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.bitclaw.plist
+
+Uninstall service:
+  launchctl bootout gui/$(id -u)/com.bitclaw
+  rm ~/Library/LaunchAgents/com.bitclaw.plist
 
 Interactive chat (without Telegram):
   npm run chat
