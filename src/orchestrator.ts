@@ -1,10 +1,13 @@
+import path from 'node:path';
 import { IPC_POLL_MS, type BitclawPaths } from './config.js';
+import { checkAndFireTasks, ensureTasksDir } from './cron.js';
 import { formatOutboundEvent } from './format.js';
 import { receiveFromAgent, sendToAgent } from './ipc.js';
 import { ensureContainer, restartContainer, stopContainer } from './runtime.js';
 import type { Channel } from './types.js';
 
 const RESTART_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const TASK_POLL_MS = 60_000; // 60 seconds
 
 export interface OrchestratorOptions {
   channel: Channel;
@@ -17,6 +20,8 @@ export class Orchestrator {
   private paths: BitclawPaths | null = null;
   private polling = false;
   private restartTimer: ReturnType<typeof setInterval> | null = null;
+  private taskTimer: ReturnType<typeof setInterval> | null = null;
+  private lastTaskMinute = '';
 
   constructor(opts: OrchestratorOptions) {
     this.channel = opts.channel;
@@ -38,9 +43,20 @@ export class Orchestrator {
     this.paths = ensureContainer(this.projectRoot).paths;
     await this.channel.start();
 
+    // Ensure tasks directory exists
+    const tasksDir = path.join(this.paths.workspaceDir, 'tasks');
+    ensureTasksDir(tasksDir);
+
     // Start background IPC poller
     this.polling = true;
     this.pollLoop();
+
+    // Start task scheduler (poll every 60s)
+    this.taskTimer = setInterval(() => {
+      if (!this.paths) return;
+      const td = path.join(this.paths.workspaceDir, 'tasks');
+      this.lastTaskMinute = checkAndFireTasks(td, this.paths, this.lastTaskMinute);
+    }, TASK_POLL_MS);
 
     console.log('Bitclaw running. Listening for Telegram messages. Ctrl+C to stop.');
 
@@ -79,6 +95,10 @@ export class Orchestrator {
     if (this.restartTimer) {
       clearInterval(this.restartTimer);
       this.restartTimer = null;
+    }
+    if (this.taskTimer) {
+      clearInterval(this.taskTimer);
+      this.taskTimer = null;
     }
     await this.channel.stop();
     try { stopContainer(); } catch { /* not fatal */ }

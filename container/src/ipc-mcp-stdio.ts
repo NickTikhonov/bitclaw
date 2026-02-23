@@ -6,7 +6,27 @@ import path from 'node:path';
 import { CronExpressionParser } from 'cron-parser';
 import { sendEventToHost } from './ipc-utils.js';
 
-const TASKS_FILE = '/workspace/ipc/current_tasks.json';
+const TASKS_DIR = '/workspace/workspace/tasks';
+
+function ensureTasksDir(): void {
+  fs.mkdirSync(TASKS_DIR, { recursive: true });
+}
+
+function taskPath(name: string): string {
+  return path.join(TASKS_DIR, `${name}.json`);
+}
+
+function isValidSchedule(schedule: string): string | null {
+  // Try cron first
+  try {
+    CronExpressionParser.parse(schedule);
+    return null;
+  } catch { /* not cron */ }
+  // Try ISO date
+  const d = new Date(schedule);
+  if (!Number.isNaN(d.getTime())) return null;
+  return `Invalid schedule: "${schedule}". Use a 5-field cron expression or an ISO date string.`;
+}
 
 const server = new McpServer({
   name: 'nanoclaw',
@@ -32,120 +52,111 @@ server.tool(
 );
 
 server.tool(
-  'schedule_task',
-  'Schedule a recurring or one-time task.',
+  'create_task',
+  'Create a recurring or one-shot task. Recurring tasks use a 5-field cron expression (e.g. "0 9 * * *"). One-shot tasks use an ISO date string (e.g. "2026-03-01T14:00:00Z").',
   {
-    prompt: z.string(),
-    schedule_type: z.enum(['cron', 'interval', 'once']),
-    schedule_value: z.string(),
-    context_mode: z.enum(['group', 'isolated']).default('group'),
+    name: z.string().describe('Short kebab-case name for the task file (e.g. "daily-email-check")'),
+    schedule: z.string().describe('Cron expression for recurring, or ISO date for one-shot'),
+    prompt: z.string().describe('The prompt text to send to the agent when the task fires'),
   },
   async (args) => {
-    if (args.schedule_type === 'cron') {
-      try {
-        CronExpressionParser.parse(args.schedule_value);
-      } catch {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}"` }],
-          isError: true,
-        };
-      }
-    } else if (args.schedule_type === 'interval') {
-      const ms = parseInt(args.schedule_value, 10);
-      if (Number.isNaN(ms) || ms <= 0) {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}"` }],
-          isError: true,
-        };
-      }
-    } else {
-      const date = new Date(args.schedule_value);
-      if (Number.isNaN(date.getTime())) {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}"` }],
-          isError: true,
-        };
-      }
+    const err = isValidSchedule(args.schedule);
+    if (err) return { content: [{ type: 'text' as const, text: err }], isError: true };
+
+    ensureTasksDir();
+    const filePath = taskPath(args.name);
+    if (fs.existsSync(filePath)) {
+      return { content: [{ type: 'text' as const, text: `Task "${args.name}" already exists. Use edit_task to modify it.` }], isError: true };
     }
-
-    sendEventToHost({
-      type: 'schedule_task',
-      prompt: args.prompt,
-      schedule_type: args.schedule_type,
-      schedule_value: args.schedule_value,
-      context_mode: args.context_mode,
-      timestamp: new Date().toISOString(),
-    });
-
-    return { content: [{ type: 'text' as const, text: 'Task scheduled.' }] };
+    fs.writeFileSync(filePath, JSON.stringify({ schedule: args.schedule, prompt: args.prompt }, null, 2));
+    return { content: [{ type: 'text' as const, text: `Task "${args.name}" created.` }] };
   },
 );
 
 server.tool(
   'list_tasks',
-  'List all scheduled tasks from current_tasks.json.',
+  'List all scheduled tasks.',
   {},
   async () => {
-    if (!fs.existsSync(TASKS_FILE)) {
-      return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
+    ensureTasksDir();
+    const files = fs.readdirSync(TASKS_DIR).filter((f) => f.endsWith('.json'));
+    if (files.length === 0) {
+      return { content: [{ type: 'text' as const, text: 'No tasks found.' }] };
     }
-
-    try {
-      const tasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf-8')) as Array<{ id?: string; prompt?: string }>;
-      if (tasks.length === 0) {
-        return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
+    const lines = files.map((f) => {
+      try {
+        const raw = JSON.parse(fs.readFileSync(path.join(TASKS_DIR, f), 'utf8')) as Record<string, unknown>;
+        const name = f.replace(/\.json$/, '');
+        return `- ${name}: schedule="${String(raw.schedule ?? '?')}" prompt="${String(raw.prompt ?? '').slice(0, 60)}"`;
+      } catch {
+        return `- ${f}: (unreadable)`;
       }
-      const summary = tasks
-        .map((task) => `- [${task.id ?? 'unknown'}] ${(task.prompt ?? '').slice(0, 60)}`)
-        .join('\n');
-      return { content: [{ type: 'text' as const, text: `Scheduled tasks:\n${summary}` }] };
-    } catch (err) {
-      return {
-        content: [{ type: 'text' as const, text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}` }],
-      };
+    });
+    return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+  },
+);
+
+server.tool(
+  'read_task',
+  'Read the full definition of a specific task.',
+  {
+    name: z.string().describe('Task name (without .json extension)'),
+  },
+  async (args) => {
+    ensureTasksDir();
+    const filePath = taskPath(args.name);
+    if (!fs.existsSync(filePath)) {
+      return { content: [{ type: 'text' as const, text: `Task "${args.name}" not found.` }], isError: true };
     }
+    const content = fs.readFileSync(filePath, 'utf8');
+    return { content: [{ type: 'text' as const, text: content }] };
   },
 );
 
 server.tool(
-  'pause_task',
-  'Pause a scheduled task.',
-  { task_id: z.string() },
+  'edit_task',
+  'Edit an existing task. You can update the schedule, the prompt, or both.',
+  {
+    name: z.string().describe('Task name (without .json extension)'),
+    schedule: z.string().optional().describe('New cron expression or ISO date'),
+    prompt: z.string().optional().describe('New prompt text'),
+  },
   async (args) => {
-    sendEventToHost({
-      type: 'pause_task',
-      taskId: args.task_id,
-      timestamp: new Date().toISOString(),
-    });
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} pause requested.` }] };
+    ensureTasksDir();
+    const filePath = taskPath(args.name);
+    if (!fs.existsSync(filePath)) {
+      return { content: [{ type: 'text' as const, text: `Task "${args.name}" not found.` }], isError: true };
+    }
+
+    const existing = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
+    if (args.schedule !== undefined) {
+      const err = isValidSchedule(args.schedule);
+      if (err) return { content: [{ type: 'text' as const, text: err }], isError: true };
+      existing.schedule = args.schedule;
+    }
+    if (args.prompt !== undefined) {
+      existing.prompt = args.prompt;
+    }
+
+    fs.writeFileSync(filePath, JSON.stringify(existing, null, 2));
+    return { content: [{ type: 'text' as const, text: `Task "${args.name}" updated.` }] };
   },
 );
 
 server.tool(
-  'resume_task',
-  'Resume a paused task.',
-  { task_id: z.string() },
-  async (args) => {
-    sendEventToHost({
-      type: 'resume_task',
-      taskId: args.task_id,
-      timestamp: new Date().toISOString(),
-    });
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} resume requested.` }] };
+  'delete_task',
+  'Delete a task.',
+  {
+    name: z.string().describe('Task name (without .json extension)'),
   },
-);
-
-server.tool(
-  'cancel_task',
-  'Cancel and delete a scheduled task.',
-  { task_id: z.string() },
   async (args) => {
-    sendEventToHost({
-      type: 'cancel_task',
-      taskId: args.task_id,
-      timestamp: new Date().toISOString(),
-    });
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} cancellation requested.` }] };
+    ensureTasksDir();
+    const filePath = taskPath(args.name);
+    if (!fs.existsSync(filePath)) {
+      return { content: [{ type: 'text' as const, text: `Task "${args.name}" not found.` }], isError: true };
+    }
+    fs.unlinkSync(filePath);
+    return { content: [{ type: 'text' as const, text: `Task "${args.name}" deleted.` }] };
   },
 );
 
