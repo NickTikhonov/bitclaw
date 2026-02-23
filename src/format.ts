@@ -17,8 +17,8 @@ export function formatOutboundEvent(event: OutboundEnvelope): string | null {
     return String(event.text ?? '');
   }
 
-  // tool_call events are internal telemetry — don't forward to channels
-  if (event.type === 'tool_call') {
+  // tool_call and typing events are handled by the orchestrator directly
+  if (event.type === 'tool_call' || event.type === 'typing') {
     return null;
   }
 

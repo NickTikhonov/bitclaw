@@ -248,6 +248,9 @@ async function runClaudeQuery(
   // Build allowed tool patterns for external MCP servers
   const externalMcpToolPatterns = Object.keys(externalMcpServers).map((name) => `mcp__${name}__*`);
 
+  let lastTypingAt = 0;
+  const TYPING_THROTTLE_MS = 1000;
+
   for await (const message of query({
     prompt,
     options: {
@@ -294,6 +297,13 @@ async function runClaudeQuery(
       },
     },
   })) {
+    // Emit throttled typing events (at most 1 per second)
+    const now = Date.now();
+    if (now - lastTypingAt >= TYPING_THROTTLE_MS) {
+      sendEventToHost({ type: 'typing', timestamp: new Date().toISOString() });
+      lastTypingAt = now;
+    }
+
     const toolCalls = extractToolCalls(message);
     for (const toolCall of toolCalls) {
       sendEventToHost({

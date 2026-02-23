@@ -3,7 +3,8 @@ export type InboundType = 'messages' | 'task' | 'heartbeat' | 'shutdown';
 export type OutboundType =
   | 'result'
   | 'message'
-  | 'tool_call';
+  | 'tool_call'
+  | 'typing';
 
 export interface InboundEnvelopeBase {
   type: InboundType;
@@ -47,4 +48,6 @@ export interface Channel {
   onMessage(handler: (text: string) => void): void;
   start(): Promise<void>;
   stop(): Promise<void>;
+  setTyping(active: boolean): void;
+  setToolStatus(text: string): void;
 }

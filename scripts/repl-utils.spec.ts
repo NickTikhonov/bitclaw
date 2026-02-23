@@ -62,3 +62,13 @@ test('formatOutboundEvent returns null for tool_call events', () => {
     null,
   );
 });
+
+test('formatOutboundEvent returns null for typing events', () => {
+  assert.equal(
+    formatOutboundEvent({
+      type: 'typing',
+      timestamp: new Date().toISOString(),
+    }),
+    null,
+  );
+});

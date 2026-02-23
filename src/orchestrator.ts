@@ -4,10 +4,12 @@ import { checkAndFireTasks, ensureTasksDir } from './cron.js';
 import { formatOutboundEvent } from './format.js';
 import { receiveFromAgent, sendToAgent } from './ipc.js';
 import { ensureContainer, restartContainer, stopContainer } from './runtime.js';
+import { generateStatus } from './status.js';
 import type { Channel } from './types.js';
 
 const RESTART_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const TASK_POLL_MS = 60_000; // 60 seconds
+const TYPING_TIMEOUT_MS = 10_000; // 10 seconds safety net
 
 export interface OrchestratorOptions {
   channel: Channel;
@@ -21,6 +23,7 @@ export class Orchestrator {
   private polling = false;
   private restartTimer: ReturnType<typeof setInterval> | null = null;
   private taskTimer: ReturnType<typeof setInterval> | null = null;
+  private typingTimeout: ReturnType<typeof setTimeout> | null = null;
   private lastTaskMinute = '';
 
   constructor(opts: OrchestratorOptions) {
@@ -71,10 +74,46 @@ export class Orchestrator {
     process.on('SIGTERM', onSignal);
   }
 
+  private resetTypingTimeout(): void {
+    if (this.typingTimeout) clearTimeout(this.typingTimeout);
+    this.typingTimeout = setTimeout(() => {
+      this.channel.setTyping(false);
+      this.typingTimeout = null;
+    }, TYPING_TIMEOUT_MS);
+  }
+
+  private clearTypingTimeout(): void {
+    if (this.typingTimeout) {
+      clearTimeout(this.typingTimeout);
+      this.typingTimeout = null;
+    }
+  }
+
   private async pollLoop(): Promise<void> {
     while (this.polling) {
       try {
         await receiveFromAgent(this.paths!, async (event) => {
+          // Typing events — toggle presence indicator
+          if (event.type === 'typing') {
+            this.channel.setTyping(true);
+            this.resetTypingTimeout();
+            return;
+          }
+
+          // Tool call events — generate and show a fun status
+          if (event.type === 'tool_call') {
+            const toolName = String(event.toolName ?? '');
+            if (toolName) {
+              const status = await generateStatus(toolName);
+              this.channel.setToolStatus(status);
+            }
+            return;
+          }
+
+          // Result/message events — send to channel (clears typing + replaces status)
+          if (event.type === 'result' || event.type === 'message') {
+            this.clearTypingTimeout();
+          }
           const text = formatOutboundEvent(event);
           if (text) await this.channel.send(text);
         });
@@ -92,6 +131,7 @@ export class Orchestrator {
 
   async stop(): Promise<void> {
     this.polling = false;
+    this.clearTypingTimeout();
     if (this.restartTimer) {
       clearInterval(this.restartTimer);
       this.restartTimer = null;

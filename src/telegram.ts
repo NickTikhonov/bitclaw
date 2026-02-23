@@ -3,11 +3,14 @@ import telegramifyMarkdown from 'telegramify-markdown';
 import type { Channel } from './types.js';
 
 const MAX_MSG_LENGTH = 4096;
+const TYPING_REPEAT_MS = 4000;
 
 export class TelegramChannel implements Channel {
   private bot: Bot;
   private chatId: string;
   private handler: ((text: string) => void) | null = null;
+  private typingInterval: ReturnType<typeof setInterval> | null = null;
+  private statusMessageId: number | null = null;
 
   constructor() {
     const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -29,15 +32,78 @@ export class TelegramChannel implements Channel {
   }
 
   async send(text: string): Promise<void> {
-    const formatted = telegramifyMarkdown(text, 'escape');
-    const chunks = chunkString(formatted, MAX_MSG_LENGTH);
-    for (const chunk of chunks) {
+    this.setTyping(false);
+
+    // If there's an active status message, replace it with the final text
+    if (this.statusMessageId) {
+      const msgId = this.statusMessageId;
+      this.statusMessageId = null;
+
+      const formatted = telegramifyMarkdown(text, 'escape');
+      const first = chunkString(formatted, MAX_MSG_LENGTH)[0];
       try {
-        await this.bot.api.sendMessage(this.chatId, chunk, { parse_mode: 'MarkdownV2' });
+        await this.bot.api.editMessageText(this.chatId, msgId, first, {
+          parse_mode: 'MarkdownV2',
+        });
       } catch {
-        // Fall back to plain text if MarkdownV2 parsing fails
-        await this.bot.api.sendMessage(this.chatId, text.slice(0, MAX_MSG_LENGTH));
+        // Fallback: edit as plain text
+        try {
+          await this.bot.api.editMessageText(
+            this.chatId,
+            msgId,
+            text.slice(0, MAX_MSG_LENGTH),
+          );
+        } catch {
+          // Edit failed entirely — send a new message instead
+          await this.sendNew(text);
+          return;
+        }
       }
+
+      // If the text was longer than one chunk, send remaining chunks as new messages
+      const formatted2 = telegramifyMarkdown(text, 'escape');
+      const chunks = chunkString(formatted2, MAX_MSG_LENGTH);
+      for (let i = 1; i < chunks.length; i++) {
+        await this.sendChunk(chunks[i], text);
+      }
+      return;
+    }
+
+    // No status message — send normally
+    await this.sendNew(text);
+  }
+
+  setTyping(active: boolean): void {
+    if (active) {
+      // Already typing — idempotent
+      if (this.typingInterval) return;
+      // Send immediately, then repeat every 4s
+      this.bot.api.sendChatAction(this.chatId, 'typing').catch(() => {});
+      this.typingInterval = setInterval(() => {
+        this.bot.api.sendChatAction(this.chatId, 'typing').catch(() => {});
+      }, TYPING_REPEAT_MS);
+    } else {
+      if (this.typingInterval) {
+        clearInterval(this.typingInterval);
+        this.typingInterval = null;
+      }
+    }
+  }
+
+  setToolStatus(text: string): void {
+    if (this.statusMessageId) {
+      // Edit existing status message in place
+      this.bot.api
+        .editMessageText(this.chatId, this.statusMessageId, text)
+        .catch(() => {});
+    } else {
+      // Send a new status message and store its ID
+      this.bot.api
+        .sendMessage(this.chatId, text)
+        .then((msg) => {
+          this.statusMessageId = msg.message_id;
+        })
+        .catch(() => {});
     }
   }
 
@@ -46,7 +112,30 @@ export class TelegramChannel implements Channel {
   }
 
   async stop(): Promise<void> {
+    this.setTyping(false);
     await this.bot.stop();
+  }
+
+  private async sendNew(text: string): Promise<void> {
+    const formatted = telegramifyMarkdown(text, 'escape');
+    const chunks = chunkString(formatted, MAX_MSG_LENGTH);
+    for (const chunk of chunks) {
+      await this.sendChunk(chunk, text);
+    }
+  }
+
+  private async sendChunk(formattedChunk: string, plainFallback: string): Promise<void> {
+    try {
+      await this.bot.api.sendMessage(this.chatId, formattedChunk, {
+        parse_mode: 'MarkdownV2',
+      });
+    } catch {
+      // Fall back to plain text if MarkdownV2 parsing fails
+      await this.bot.api.sendMessage(
+        this.chatId,
+        plainFallback.slice(0, MAX_MSG_LENGTH),
+      );
+    }
   }
 }
 
