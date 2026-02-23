@@ -23,7 +23,7 @@ test('formatOutboundEvent formats result and error events', () => {
       result: 'hi',
       timestamp: new Date().toISOString(),
     }),
-    '[agent] hi',
+    'hi',
   );
 
   assert.equal(

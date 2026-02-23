@@ -45,3 +45,10 @@ export interface OutboundEnvelope {
   timestamp: string;
   [key: string]: unknown;
 }
+
+export interface Channel {
+  send(text: string): Promise<void>;
+  onMessage(handler: (text: string) => void): void;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+}
