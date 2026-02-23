@@ -152,19 +152,20 @@ To remove a mount: delete its entry from `mounts` in `bitclaw.config.json`.
 
 ## After All Changes
 
-Restart the service to apply changes:
+Restart the service automatically so changes take effect:
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/com.bitclaw
 ```
 
-Then verify with:
+If that fails (service not installed), fall back to:
+```bash
+./.claude/skills/setup/scripts/02-install-service.sh
+```
+
+Then verify by checking the logs:
 ```bash
 tail -5 ~/.bitclaw/logs/app.log
 ```
 
-If the service isn't installed yet (user hasn't run setup), tell them:
-```
-Changes saved. Run setup to install BitClaw as a service, or start manually:
-  npm start
-```
+Confirm to the user that the service has been restarted and the new configuration is active.
