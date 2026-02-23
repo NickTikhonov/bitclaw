@@ -32,3 +32,12 @@ npm run chat     # Interactive REPL
 npm test         # Run tests
 npm run sloc     # Count source lines
 ```
+
+## Service Management (macOS)
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.bitclaw   # Restart the service
+launchctl kill SIGTERM gui/$(id -u)/com.bitclaw    # Stop the service
+tail -f ~/.bitclaw/logs/app.log                    # Watch logs
+tail -f ~/.bitclaw/logs/app.error.log              # Watch error logs
+```
