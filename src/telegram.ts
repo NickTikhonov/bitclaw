@@ -32,24 +32,49 @@ export class TelegramChannel implements Channel {
   }
 
   async send(text: string): Promise<void> {
-    this.setTyping(false);
+    this.cancelTyping();
 
-    // Delete the status message if one exists — we must send a NEW message
-    // (not edit) because only sendMessage clears Telegram's typing indicator.
+    // If there's an active status message, replace it with the final text
     if (this.statusMessageId) {
       const msgId = this.statusMessageId;
       this.statusMessageId = null;
-      this.bot.api.deleteMessage(this.chatId, msgId).catch(() => {});
+
+      const formatted = telegramifyMarkdown(text, 'escape');
+      const first = chunkString(formatted, MAX_MSG_LENGTH)[0];
+      try {
+        await this.bot.api.editMessageText(this.chatId, msgId, first, {
+          parse_mode: 'MarkdownV2',
+        });
+      } catch {
+        try {
+          await this.bot.api.editMessageText(
+            this.chatId,
+            msgId,
+            text.slice(0, MAX_MSG_LENGTH),
+          );
+        } catch {
+          // Edit failed entirely — send a new message instead
+          await this.sendNew(text);
+          return;
+        }
+      }
+
+      // If the text was longer than one chunk, send remaining chunks as new messages
+      const formatted2 = telegramifyMarkdown(text, 'escape');
+      const chunks = chunkString(formatted2, MAX_MSG_LENGTH);
+      for (let i = 1; i < chunks.length; i++) {
+        await this.sendChunk(chunks[i], text);
+      }
+      return;
     }
 
+    // No status message — send normally
     await this.sendNew(text);
   }
 
   setTyping(active: boolean): void {
     if (active) {
-      // Already typing — idempotent
       if (this.typingInterval) return;
-      // Send immediately, then repeat every 4s
       this.bot.api.sendChatAction(this.chatId, 'typing').catch(() => {});
       this.typingInterval = setInterval(() => {
         this.bot.api.sendChatAction(this.chatId, 'typing').catch(() => {});
@@ -64,12 +89,10 @@ export class TelegramChannel implements Channel {
 
   setToolStatus(text: string): void {
     if (this.statusMessageId) {
-      // Edit existing status message in place
       this.bot.api
         .editMessageText(this.chatId, this.statusMessageId, text)
         .catch(() => {});
     } else {
-      // Send a new status message and store its ID
       this.bot.api
         .sendMessage(this.chatId, text)
         .then((msg) => {
@@ -88,6 +111,23 @@ export class TelegramChannel implements Channel {
     await this.bot.stop();
   }
 
+  /**
+   * Stop the typing interval AND force-clear Telegram's typing indicator.
+   * Telegram only clears "typing..." when a new message arrives from the bot,
+   * so we send a silent dummy message and immediately delete it.
+   */
+  private cancelTyping(): void {
+    if (!this.typingInterval) return;
+    clearInterval(this.typingInterval);
+    this.typingInterval = null;
+
+    // Send + delete a silent message to force-clear the typing indicator
+    this.bot.api
+      .sendMessage(this.chatId, '…', { disable_notification: true })
+      .then((msg) => this.bot.api.deleteMessage(this.chatId, msg.message_id).catch(() => {}))
+      .catch(() => {});
+  }
+
   private async sendNew(text: string): Promise<void> {
     const formatted = telegramifyMarkdown(text, 'escape');
     const chunks = chunkString(formatted, MAX_MSG_LENGTH);
@@ -102,7 +142,6 @@ export class TelegramChannel implements Channel {
         parse_mode: 'MarkdownV2',
       });
     } catch {
-      // Fall back to plain text if MarkdownV2 parsing fails
       await this.bot.api.sendMessage(
         this.chatId,
         plainFallback.slice(0, MAX_MSG_LENGTH),
