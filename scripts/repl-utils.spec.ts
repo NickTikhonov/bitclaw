@@ -52,9 +52,9 @@ test('formatOutboundEvent returns null for tool_call events', () => {
   assert.equal(
     formatOutboundEvent({
       type: 'tool_call',
-      toolName: 'mcp__nanoclaw__send_message',
+      toolName: 'mcp__bitclaw__send_message',
       isMcp: true,
-      mcpServer: 'nanoclaw',
+      mcpServer: 'bitclaw',
       mcpTool: 'send_message',
       toolUseId: 'toolu_123',
       timestamp: new Date().toISOString(),

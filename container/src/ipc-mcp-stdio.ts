@@ -29,7 +29,7 @@ function isValidSchedule(schedule: string): string | null {
 }
 
 const server = new McpServer({
-  name: 'nanoclaw',
+  name: 'bitclaw',
   version: '1.0.0',
 });
 

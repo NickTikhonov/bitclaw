@@ -277,7 +277,7 @@ async function runClaudeQuery(
         'ToolSearch',
         'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*',
+        'mcp__bitclaw__*',
         ...externalMcpToolPatterns,
       ],
       env: sdkEnv,
@@ -285,7 +285,7 @@ async function runClaudeQuery(
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
       mcpServers: {
-        nanoclaw: {
+        bitclaw: {
           command: 'node',
           args: [mcpServerPath],
           env: {},
