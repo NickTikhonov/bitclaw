@@ -1,6 +1,14 @@
-# BitClaw
+<p align="center">
+  <h1 align="center">BitClaw</h1>
+</p>
 
-A personal, secure and self-upgrading Claude assistant that runs in a Docker container and talks to you on Telegram.
+<p align="center">
+  <strong>The AI assistant small enough to understand and audit over coffee.</strong>
+</p>
+
+<p align="center">
+  1,500 lines of TypeScript. That's the whole thing.
+</p>
 
 <table>
   <tr>
@@ -10,8 +18,13 @@ A personal, secure and self-upgrading Claude assistant that runs in a Docker con
   </tr>
 </table>
 
-Inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw) — same philosophy, 5x smaller @ 1200 lines of TypeScript! Small enough to read and understand in one sitting.
+## Why BitClaw?
 
+You're about to give an AI agent access to your email, calendar, and personal machine. Shouldn't you be able to read every line of code that powers it?
+
+BitClaw is a personal Claude assistant that runs in Docker and talks to you on Telegram. The entire codebase is ~1,500 lines — you can audit it in an afternoon, or ask Claude to walk you through it. It's built for developers and tinkerers who want to understand what they're running before they trust it.
+
+Inspired by [OpenClaw](https://github.com/openclaw/openclaw) and [NanoClaw](https://github.com/qwibitai/nanoclaw) — same vision, 10x less code.
 
 ## Quick Start
 
@@ -25,19 +38,100 @@ Then run `/setup`. Claude handles dependencies, API keys, Telegram bot, containe
 
 ## What It Does
 
-- **Telegram I/O** — message BitClaw from your phone
+- **Telegram I/O** — message BitClaw from your phone, get formatted responses back
 - **Container isolation** — the agent runs in Docker, not on your host
-- **Persistent sessions** — conversation context survives restarts
+- **Persistent workspace** — notes, code, and artifacts survive restarts
 - **Scheduled tasks** — recurring and one-shot jobs via file-based cron
-- **Web access** — search and fetch content
-- **Self-building** — run Claude to add integration (Gmail, Calendar, etc.) via `/customize`
+- **Extensible** — add Gmail, Google Calendar, or any MCP integration via `/customize`
+- **Self-building** — the codebase is small enough that Claude can safely modify it
 - **Runs as a service** — auto-starts at login, auto-restarts on crash
 
-## How It Works
+## Architecture
 
-Single Node.js process on the host. The agent runs in an isolated Docker container with mounted directories. Communication is via atomic JSON files in a shared IPC directory. No databases, no message queues.
+```
+Telegram
+   │
+   ▼
+┌─────────────────────────────────┐
+│  Host (single Node.js process)  │
+│                                 │
+│  Orchestrator ← Telegram channel│
+│       │                         │
+│       ▼                         │
+│  Docker container               │
+│  ┌───────────────────────────┐  │
+│  │ Claude agent + MCP tools  │  │
+│  └───────────────────────────┘  │
+│       ▲           │             │
+│       └── IPC ────┘             │
+│    (atomic JSON files)          │
+└─────────────────────────────────┘
+```
 
-## Setup
+No databases. No message queues. Just files.
+
+## What's Inside
+
+Every file, nothing hidden:
+
+```
+container/index.ts      434  Agent runtime + Claude SDK
+container/ipc-mcp.ts    162  MCP tool definitions
+telegram.ts             148  Telegram channel
+orchestrator.ts         146  Container lifecycle + IPC routing
+runtime.ts              108  Docker management
+cron.ts                  92  Task scheduler
+config.ts                80  Paths and constants
+ipc.ts                   72  Host-side IPC read/write
+customisation.ts         71  Config loading (mounts, MCPs)
+types.ts                 53  TypeScript interfaces
+status.ts                49  Tool status messages
+ipc-utils.ts             43  Container-side IPC helpers
+main.ts                  28  Entry point
+format.ts                26  Output formatting
+env.ts                   10  Env loader
+─────────────────────────────
+                       1,522  total
+```
+
+## Customizing
+
+Run `/customize` in Claude Code to add MCP integrations (Gmail, Calendar, etc.) or expose extra folders. Or just tell Claude what you want — the codebase is small enough that it can safely modify itself.
+
+## Reference
+
+<details>
+<summary>Service management</summary>
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.bitclaw    # restart
+launchctl kill SIGTERM gui/$(id -u)/com.bitclaw     # stop
+launchctl list | grep bitclaw                       # status
+```
+
+</details>
+
+<details>
+<summary>Logs</summary>
+
+```bash
+tail -f ~/.bitclaw/logs/app.log          # host orchestrator
+tail -f ~/.bitclaw/logs/app.error.log    # host errors
+tail -f ~/.bitclaw/logs/container.log    # agent container
+```
+
+</details>
+
+<details>
+<summary>Local REPL (no Telegram)</summary>
+
+```bash
+npm run chat
+```
+
+</details>
+
+## Setup (manual)
 
 Prerequisites: macOS, Node.js 20+, Docker, [Claude Code](https://claude.ai/download).
 
@@ -47,47 +141,7 @@ cp .env.example .env
 # Set ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 ```
 
-Install as a macOS service (auto-starts at login):
-
-```bash
-./.claude/skills/setup/scripts/02-install-service.sh
-```
-
-Or run `/setup` in Claude Code for guided installation.
-
-## Usage
-
-Message your Telegram bot. That's it.
-
-The agent has access to a persistent workspace at `~/.bitclaw/workspace/` where it can store notes, code, and artifacts. Edit `workspace/AGENT.md` to customize how it behaves.
-
-### Service Management
-
-```bash
-launchctl kickstart -k gui/$(id -u)/com.bitclaw    # restart
-launchctl kill SIGTERM gui/$(id -u)/com.bitclaw     # stop
-launchctl list | grep bitclaw                       # status
-```
-
-### Logs
-
-```bash
-tail -f ~/.bitclaw/logs/app.log          # host orchestrator
-tail -f ~/.bitclaw/logs/app.error.log    # host errors
-tail -f ~/.bitclaw/logs/container.log    # agent container
-```
-
-### REPL
-
-For local debugging without Telegram:
-
-```bash
-npm run chat
-```
-
-## Customizing
-
-Run `/customize` in Claude Code to add MCP integrations or expose extra folders to the agent. Or just tell Claude what you want — the codebase is small enough that it can safely modify it.
+Or just run `/setup` in Claude Code — it's easier.
 
 ## License
 
