@@ -1,5 +1,6 @@
 <p align="center">
   <h1 align="center">BitClaw</h1>
+  <img width="1024" height="1024" alt="White Background Remover" src="https://github.com/user-attachments/assets/0ba35eda-7627-44eb-9177-2f34ed88936d" />
 </p>
 
 <p align="center">
