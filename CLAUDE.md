@@ -23,6 +23,7 @@ Lightweight AI agent that runs Claude in a Docker container, communicating via f
 |-------|-------------|
 | `/setup` | First-time installation: Node, Docker, Telegram bot, API keys, container build |
 | `/customize` | Add MCP integrations (Gmail, Calendar, etc.) or expose extra folders to the agent |
+| `/add-voice-notes` | Enable Whisper voice transcription so the bot understands Telegram voice messages |
 
 ## Coding Rules
 
