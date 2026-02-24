@@ -1,7 +1,6 @@
 <h1 align="center">BitClaw</h1>
-
 <p align="center">
-  <img width="256" height="256" alt="logo" src="https://github.com/user-attachments/assets/0ba35eda-7627-44eb-9177-2f34ed88936d" />
+  <img width="256" height="256" alt="logo" src="https://github.com/user-attachments/assets/4b9fb73e-8593-4092-878c-4431b0d34376" />
 </p>
 
 <p align="center">
