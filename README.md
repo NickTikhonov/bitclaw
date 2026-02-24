@@ -4,9 +4,9 @@ A personal, secure and self-upgrading Claude assistant that runs in a Docker con
 
 <table>
   <tr>
-    <td><video src="assets/demo-1.mp4" width="260" autoplay loop muted playsinline></video></td>
-    <td><video src="assets/demo-2.mp4" width="260" autoplay loop muted playsinline></video></td>
-    <td><video src="assets/demo-3.mp4" width="260" autoplay loop muted playsinline></video></td>
+    <td><video src="https://github.com/user-attachments/assets/7e23c282-5af4-45dd-b1dd-d1bf5ee521cd" width="260" autoplay loop muted playsinline></video></td>
+    <td><video src="https://github.com/user-attachments/assets/1a961dc3-c4c5-469c-87c2-c38196f5bbc5" width="260" autoplay loop muted playsinline></video></td>
+    <td><video src="https://github.com/user-attachments/assets/e0dbbda8-bc99-4efe-ac4f-cb35e44f2095" width="260" autoplay loop muted playsinline></video></td>
   </tr>
 </table>
 
