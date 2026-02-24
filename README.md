@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  1,500 lines of TypeScript. That's the whole thing.
+  ☕ 1,500 lines of TypeScript. That's the whole thing.
 </p>
 
 <table>
@@ -18,7 +18,7 @@
   </tr>
 </table>
 
-## Why BitClaw?
+## 🤔 Why BitClaw?
 
 You're about to give an AI agent access to your email, calendar, and personal machine. Shouldn't you be able to read every line of code that powers it?
 
@@ -26,7 +26,7 @@ BitClaw is a personal Claude assistant that runs in Docker and talks to you on T
 
 Inspired by [OpenClaw](https://github.com/openclaw/openclaw) and [NanoClaw](https://github.com/qwibitai/nanoclaw) — same vision, 10x less code.
 
-## Quick Start
+## 🚀 Quick Start
 
 ```bash
 git clone https://github.com/NickTikhonov/bitclaw.git
@@ -36,17 +36,17 @@ claude
 
 Then run `/setup`. Claude handles dependencies, API keys, Telegram bot, container build, and service installation.
 
-## What It Does
+## ✨ What It Does
 
-- **Telegram I/O** — message BitClaw from your phone, get formatted responses back
-- **Container isolation** — the agent runs in Docker, not on your host
-- **Persistent workspace** — notes, code, and artifacts survive restarts
-- **Scheduled tasks** — recurring and one-shot jobs via file-based cron
-- **Extensible** — add Gmail, Google Calendar, or any MCP integration via `/customize`
-- **Self-building** — the codebase is small enough that Claude can safely modify it
-- **Runs as a service** — auto-starts at login, auto-restarts on crash
+- 💬 **Telegram I/O** — message BitClaw from your phone, get formatted responses back
+- 🐳 **Container isolation** — the agent runs in Docker, not on your host
+- 💾 **Persistent workspace** — notes, code, and artifacts survive restarts
+- ⏰ **Scheduled tasks** — recurring and one-shot jobs via file-based cron
+- 🔌 **Extensible** — add Gmail, Google Calendar, or any MCP integration via `/customize`
+- 🔧 **Self-building** — the codebase is small enough that Claude can safely modify it
+- 🔄 **Runs as a service** — auto-starts at login, auto-restarts on crash
 
-## Architecture
+## 🏗️ Architecture
 
 ```
 Telegram
@@ -70,7 +70,7 @@ Telegram
 
 No databases. No message queues. Just files.
 
-## What's Inside
+## 📂 What's Inside
 
 Every file, nothing hidden:
 
@@ -94,14 +94,14 @@ env.ts                   10  Env loader
                        1,522  total
 ```
 
-## Customizing
+## 🧩 Customizing
 
 Run `/customize` in Claude Code to add MCP integrations (Gmail, Calendar, etc.) or expose extra folders. Or just tell Claude what you want — the codebase is small enough that it can safely modify itself.
 
-## Reference
+## 📖 Reference
 
 <details>
-<summary>Service management</summary>
+<summary>⚙️ Service management</summary>
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/com.bitclaw    # restart
@@ -112,7 +112,7 @@ launchctl list | grep bitclaw                       # status
 </details>
 
 <details>
-<summary>Logs</summary>
+<summary>📋 Logs</summary>
 
 ```bash
 tail -f ~/.bitclaw/logs/app.log          # host orchestrator
@@ -123,7 +123,7 @@ tail -f ~/.bitclaw/logs/container.log    # agent container
 </details>
 
 <details>
-<summary>Local REPL (no Telegram)</summary>
+<summary>💻 Local REPL (no Telegram)</summary>
 
 ```bash
 npm run chat
@@ -131,7 +131,7 @@ npm run chat
 
 </details>
 
-## Setup (manual)
+## 🛠️ Setup (manual)
 
 Prerequisites: macOS, Node.js 20+, Docker, [Claude Code](https://claude.ai/download).
 
@@ -143,6 +143,6 @@ cp .env.example .env
 
 Or just run `/setup` in Claude Code — it's easier.
 
-## License
+## 📄 License
 
 MIT
