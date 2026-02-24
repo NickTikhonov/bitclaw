@@ -17,8 +17,8 @@ All customization lives in `bitclaw.config.json`:
 {
   "mcpServers": {
     "example": {
-      "command": "npx",
-      "args": ["-y", "@example/mcp-server"],
+      "command": "node",
+      "args": ["/usr/local/lib/node_modules/@example/mcp-server/dist/index.js"],
       "env": ["EXAMPLE_API_KEY"]
     }
   },
@@ -34,6 +34,47 @@ All customization lives in `bitclaw.config.json`:
 
 - `mcpServers`: MCP servers injected into the agent's Claude SDK session. The `env` array lists env var **names** — their values are read from `.env` at startup and securely passed to the container.
 - `mounts`: Extra host directories mounted into the container. Paths starting with `~` are resolved to the user's home directory.
+
+## CRITICAL: Pre-installing MCP Packages
+
+MCP servers run **inside** the Docker container. **Never use `npx` as the command** — it tries to download the package from npm on every invocation, which is flaky (70s+ timeouts when the network is slow or unavailable).
+
+Instead, every MCP server npm package must be:
+
+1. **Pre-installed globally in `container/Dockerfile`:**
+
+```dockerfile
+RUN npm install -g @example/mcp-server
+```
+
+2. **Referenced by direct `node` path in `bitclaw.config.json`:**
+
+```json
+{
+  "command": "node",
+  "args": ["/usr/local/lib/node_modules/@example/mcp-server/dist/index.js"]
+}
+```
+
+### Finding the correct entrypoint path
+
+After adding the package to the Dockerfile and rebuilding, run:
+
+```bash
+docker run --rm bitclaw-agent node -e "const p=require('/usr/local/lib/node_modules/@example/mcp-server/package.json'); console.log(p.main || Object.values(p.bin || {})[0])"
+```
+
+This prints the relative entrypoint (e.g. `dist/index.js`). Prepend `/usr/local/lib/node_modules/<package>/` to get the full path.
+
+### Rebuilding the container
+
+After any Dockerfile change:
+
+```bash
+docker build -f container/Dockerfile -t bitclaw-agent .
+```
+
+Then restart the service (see "After All Changes" below).
 
 ## Flow
 
@@ -141,7 +182,21 @@ else
 fi
 ```
 
-### 6. Add Gmail to Config
+### 6. Pre-install in Dockerfile
+
+Add the Gmail MCP package to `container/Dockerfile` (before the `WORKDIR /app` line):
+
+```dockerfile
+RUN npm install -g @gongrzhe/server-gmail-autoauth-mcp
+```
+
+Then rebuild the container:
+
+```bash
+docker build -f container/Dockerfile -t bitclaw-agent .
+```
+
+### 7. Add Gmail to Config
 
 Add the Gmail MCP server and credentials mount to `bitclaw.config.json`:
 
@@ -149,8 +204,8 @@ Add the Gmail MCP server and credentials mount to `bitclaw.config.json`:
 {
   "mcpServers": {
     "gmail": {
-      "command": "npx",
-      "args": ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],
+      "command": "node",
+      "args": ["/usr/local/lib/node_modules/@gongrzhe/server-gmail-autoauth-mcp/dist/index.js"],
       "env": []
     }
   },
@@ -166,7 +221,7 @@ Add the Gmail MCP server and credentials mount to `bitclaw.config.json`:
 
 The mount must be **read-write** (`readonly: false`) because the MCP server may need to refresh OAuth tokens.
 
-### 7. Update Agent Memory
+### 8. Update Agent Memory
 
 Append to `~/.bitclaw/workspace/AGENT.md`:
 
@@ -184,7 +239,7 @@ You have access to Gmail via MCP tools:
 Examples: "Check my unread emails from today" or "Send an email to john@example.com about the meeting"
 ```
 
-### 8. Restart and Test
+### 9. Restart and Test
 
 Follow "After All Changes" below, then tell the user:
 
@@ -201,9 +256,10 @@ tail -f ~/.bitclaw/logs/container.log
 
 ### Gmail Troubleshooting
 
-- **MCP not responding:** `npx -y @gongrzhe/server-gmail-autoauth-mcp` — test directly
-- **OAuth token expired:** `rm ~/.gmail-mcp/credentials.json` then re-run auth (step 4)
+- **MCP not responding:** Run inside the container to test: `docker run --rm bitclaw-agent node /usr/local/lib/node_modules/@gongrzhe/server-gmail-autoauth-mcp/dist/index.js`
+- **OAuth token expired:** `rm ~/.gmail-mcp/credentials.json` then re-run auth (step 4). If the GCP OAuth consent screen is in "Testing" mode, tokens expire after 7 days — publish the app to fix this.
 - **Container can't access Gmail:** Verify `~/.gmail-mcp` mount in `bitclaw.config.json`
+- **"No such tool available":** The MCP server likely failed to start. Check `~/.bitclaw/logs/container.log` for errors. Ensure the package is pre-installed in the Dockerfile (not relying on `npx` to download at runtime).
 
 ---
 
@@ -219,7 +275,7 @@ tail -f ~/.bitclaw/logs/container.log
 
 | Service | Package | Required Env Vars |
 |---------|---------|-------------------|
-| Google Calendar | `@anthropic-ai/google-calendar-mcp` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` |
+| Google Calendar | `@cocal/google-calendar-mcp` | (uses OAuth files) |
 | Google Drive | `@anthropic-ai/google-drive-mcp` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` |
 | Slack | `@anthropic-ai/slack-mcp` | `SLACK_BOT_TOKEN` |
 | Notion | `@anthropic-ai/notion-mcp` | `NOTION_API_KEY` |
@@ -227,27 +283,37 @@ tail -f ~/.bitclaw/logs/container.log
 
 If you don't know the package name, search the web for `"<service> mcp server npm"` to find it.
 
-2. Add the server to `bitclaw.config.json`:
+2. **Pre-install in the Dockerfile.** Add a `RUN npm install -g <package>` line to `container/Dockerfile` (before `WORKDIR /app`), then rebuild the image:
+
+```bash
+docker build -f container/Dockerfile -t bitclaw-agent .
+```
+
+3. **Find the entrypoint path** inside the built image:
+
+```bash
+docker run --rm bitclaw-agent node -e "const p=require('/usr/local/lib/node_modules/<package>/package.json'); console.log(p.main || Object.values(p.bin || {})[0])"
+```
+
+4. Add the server to `bitclaw.config.json` using `node` + the full path (never `npx`):
 
 ```json
 {
   "mcpServers": {
     "calendar": {
-      "command": "npx",
-      "args": ["-y", "@anthropic-ai/google-calendar-mcp"],
+      "command": "node",
+      "args": ["/usr/local/lib/node_modules/@cocal/google-calendar-mcp/dist/index.js"],
       "env": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"]
     }
   }
 }
 ```
 
-3. Add required env vars to `.env` and `.env.example` (with comments explaining what they are and where to get them).
+5. Add required env vars to `.env` and `.env.example` (with comments explaining what they are and where to get them).
 
-4. If the MCP server stores credentials on disk (like Gmail), add a mount for them in `bitclaw.config.json`.
+6. If the MCP server stores credentials on disk (like Gmail), add a mount for them in `bitclaw.config.json`.
 
-5. Update `~/.bitclaw/workspace/AGENT.md` with the available tools.
-
-6. **Important:** MCP servers run inside the Docker container. The container uses default Docker networking which allows outbound connections.
+7. Update `~/.bitclaw/workspace/AGENT.md` with the available tools.
 
 ### Verification:
 
