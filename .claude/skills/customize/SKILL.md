@@ -90,6 +90,12 @@ Use the `/add-gmail` skill — it handles the full setup including GCP OAuth, cr
 
 ---
 
+## Adding Google Calendar
+
+Use the `/add-gcal` skill — it handles Calendar API setup, OAuth (reusing Gmail credentials if available), Dockerfile pre-install, config, env vars, and agent memory.
+
+---
+
 ## Adding a Generic MCP Server
 
 ### Questions to ask:
