@@ -2,7 +2,16 @@
 
 A personal, secure and self-upgrading Claude assistant that runs in a Docker container and talks to you on Telegram.
 
+<table>
+  <tr>
+    <td><video src="assets/demo-1.mp4" width="260" autoplay loop muted playsinline></video></td>
+    <td><video src="assets/demo-2.mp4" width="260" autoplay loop muted playsinline></video></td>
+    <td><video src="assets/demo-3.mp4" width="260" autoplay loop muted playsinline></video></td>
+  </tr>
+</table>
+
 Inspired by [NanoClaw](https://github.com/qwibitai/nanoclaw) — same philosophy, 5x smaller @ 1200 lines of TypeScript! Small enough to read and understand in one sitting.
+
 
 ## Quick Start
 
