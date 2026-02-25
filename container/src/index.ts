@@ -80,7 +80,6 @@ let resumeAt: string | undefined;
 
 interface SessionState {
   sessionId?: string;
-  resumeAt?: string;
   updatedAt: string;
 }
 
@@ -157,11 +156,11 @@ function loadSessionState(): void {
     if (typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0) {
       sessionId = parsed.sessionId;
     }
-    if (typeof parsed.resumeAt === 'string' && parsed.resumeAt.length > 0) {
-      resumeAt = parsed.resumeAt;
-    }
-    if (sessionId || resumeAt) {
-      log(`Loaded persistent session state (sessionId: ${sessionId ? 'yes' : 'no'}, resumeAt: ${resumeAt ? 'yes' : 'no'})`);
+    // resumeAt is intentionally NOT loaded from disk — it's ephemeral
+    // and only valid within the same process lifetime. Persisting it
+    // across restarts causes hangs when the server-side checkpoint expires.
+    if (sessionId) {
+      log(`Loaded persistent session state (sessionId: yes)`);
     }
   } catch (err) {
     log(`Failed to load session state: ${err instanceof Error ? err.message : String(err)}`);
@@ -173,7 +172,6 @@ function saveSessionState(): void {
     fs.mkdirSync(path.dirname(SESSION_STATE_FILE), { recursive: true });
     const payload: SessionState = {
       sessionId,
-      resumeAt,
       updatedAt: new Date().toISOString(),
     };
     fs.writeFileSync(SESSION_STATE_FILE, JSON.stringify(payload, null, 2));
