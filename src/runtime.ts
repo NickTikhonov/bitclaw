@@ -23,6 +23,10 @@ export function buildContainerImage(projectRoot: string): void {
 }
 
 export function stopContainer(): void {
+  // Send SIGTERM via `docker stop` — gives the container time to abort
+  // any in-flight query and clean up (default 10s grace period).
+  spawnSync('docker', ['stop', '-t', '10', CONTAINER_NAME], { stdio: 'ignore' });
+  // Ensure removal even if stop timed out
   spawnSync('docker', ['rm', '-f', CONTAINER_NAME], { stdio: 'ignore' });
 }
 
@@ -102,7 +106,4 @@ export function ensureContainer(projectRoot: string): RuntimeStartResult {
   return startContainer(projectRoot);
 }
 
-export function restartContainer(projectRoot: string): RuntimeStartResult {
-  return startContainer(projectRoot);
-}
 

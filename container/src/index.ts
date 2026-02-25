@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   query,
+  type Query,
   type HookCallback,
   type PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
@@ -40,6 +41,18 @@ const POLL_MS = 400;
 const WORKSPACE_DIR = '/workspace/workspace';
 const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
 const SESSION_STATE_FILE = '/home/node/.claude/bitclaw-session.json';
+
+/** Watchdog: max silence before first meaningful SDK event */
+const INIT_TIMEOUT_MS = 60_000;
+/** Watchdog: max silence during an active query */
+const MID_QUERY_TIMEOUT_MS = 120_000;
+/** Watchdog poll interval */
+const WATCHDOG_POLL_MS = 10_000;
+
+// ── Graceful shutdown state ──
+let shuttingDown = false;
+let activeQuery: Query | null = null;
+let activeAbort: AbortController | null = null;
 
 const SYSTEM_PROMPT = `You are BitClaw, a smart AI agent.
 
@@ -233,6 +246,13 @@ function extractToolCalls(message: unknown): ToolCallEvent[] {
   return results;
 }
 
+function clearSession(): void {
+  log('Clearing stale session state');
+  sessionId = undefined;
+  resumeAt = undefined;
+  try { fs.unlinkSync(SESSION_STATE_FILE); } catch { /* already gone */ }
+}
+
 async function runClaudeQuery(
   prompt: string,
   sdkEnv: Record<string, string | undefined>,
@@ -243,38 +263,50 @@ async function runClaudeQuery(
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
   let latestResult: string | null = null;
 
-  // Build allowed tool patterns for external MCP servers
   const externalMcpToolPatterns = Object.keys(externalMcpServers).map((name) => `mcp__${name}__*`);
 
   let lastTypingAt = 0;
   const TYPING_THROTTLE_MS = 1000;
 
-  for await (const message of query({
+  // ── Watchdog state ──
+  let lastEventAt = Date.now();
+  let gotMeaningfulEvent = false;
+
+  const watchdog = setInterval(() => {
+    const silentMs = Date.now() - lastEventAt;
+
+    if (!gotMeaningfulEvent && silentMs > INIT_TIMEOUT_MS) {
+      log(`Watchdog: no meaningful event after ${(silentMs / 1000).toFixed(0)}s — stale session`);
+      clearSession();
+      // Abort the query so the for-await exits instead of hard-killing
+      if (activeAbort) activeAbort.abort();
+      return;
+    }
+
+    if (gotMeaningfulEvent && silentMs > MID_QUERY_TIMEOUT_MS) {
+      log(`Watchdog: SDK silent for ${(silentMs / 1000).toFixed(0)}s mid-query — aborting`);
+      if (activeAbort) activeAbort.abort();
+      return;
+    }
+  }, WATCHDOG_POLL_MS);
+
+  // ── AbortController for this query ──
+  const abort = new AbortController();
+  activeAbort = abort;
+
+  const q = query({
     prompt,
     options: {
+      abortController: abort,
       systemPrompt: SYSTEM_PROMPT,
       cwd: WORKSPACE_DIR,
       resume: isolated ? undefined : sessionId,
       resumeSessionAt: isolated ? undefined : resumeAt,
       allowedTools: [
-        'Bash',
-        'Read',
-        'Write',
-        'Edit',
-        'Glob',
-        'Grep',
-        'WebSearch',
-        'WebFetch',
-        'Task',
-        'TaskOutput',
-        'TaskStop',
-        'TeamCreate',
-        'TeamDelete',
-        'SendMessage',
-        'TodoWrite',
-        'ToolSearch',
-        'Skill',
-        'NotebookEdit',
+        'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep',
+        'WebSearch', 'WebFetch', 'Task', 'TaskOutput', 'TaskStop',
+        'TeamCreate', 'TeamDelete', 'SendMessage', 'TodoWrite',
+        'ToolSearch', 'Skill', 'NotebookEdit',
         'mcp__bitclaw__*',
         ...externalMcpToolPatterns,
       ],
@@ -294,47 +326,68 @@ async function runClaudeQuery(
         PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
       },
     },
-  })) {
-    // Emit throttled typing events (at most 1 per second)
-    const now = Date.now();
-    if (now - lastTypingAt >= TYPING_THROTTLE_MS) {
-      sendEventToHost({ type: 'typing', timestamp: new Date().toISOString() });
-      lastTypingAt = now;
-    }
+  });
+  activeQuery = q;
 
-    const toolCalls = extractToolCalls(message);
-    for (const toolCall of toolCalls) {
-      sendEventToHost({
-        type: 'tool_call',
-        toolName: toolCall.toolName,
-        toolUseId: toolCall.toolUseId,
-        isMcp: toolCall.isMcp,
-        mcpServer: toolCall.mcpServer,
-        mcpTool: toolCall.mcpTool,
-        timestamp: new Date().toISOString(),
-      });
-    }
+  try {
+    for await (const message of q) {
+      lastEventAt = Date.now();
 
-    if (message.type === 'system' && message.subtype === 'init' && !isolated) {
-      sessionId = message.session_id;
-      saveSessionState();
+      // Emit throttled typing events (at most 1 per second)
+      const now = Date.now();
+      if (now - lastTypingAt >= TYPING_THROTTLE_MS) {
+        sendEventToHost({ type: 'typing', timestamp: new Date().toISOString() });
+        lastTypingAt = now;
+      }
+
+      const toolCalls = extractToolCalls(message);
+      for (const toolCall of toolCalls) {
+        gotMeaningfulEvent = true;
+        sendEventToHost({
+          type: 'tool_call',
+          toolName: toolCall.toolName,
+          toolUseId: toolCall.toolUseId,
+          isMcp: toolCall.isMcp,
+          mcpServer: toolCall.mcpServer,
+          mcpTool: toolCall.mcpTool,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      if (message.type === 'system' && message.subtype === 'init' && !isolated) {
+        sessionId = message.session_id;
+        saveSessionState();
+      }
+      if (message.type === 'assistant') {
+        gotMeaningfulEvent = true;
+        if ('uuid' in message && !isolated) {
+          resumeAt = message.uuid;
+          saveSessionState();
+        }
+      }
+      if (message.type === 'result') {
+        gotMeaningfulEvent = true;
+        latestResult = 'result' in message && typeof message.result === 'string'
+          ? message.result
+          : null;
+        sendEventToHost({
+          type: 'result',
+          status: 'success',
+          result: latestResult,
+          sessionId: isolated ? undefined : sessionId,
+          timestamp: new Date().toISOString(),
+        });
+      }
     }
-    if (message.type === 'assistant' && 'uuid' in message && !isolated) {
-      resumeAt = message.uuid;
-      saveSessionState();
-    }
-    if (message.type === 'result') {
-      latestResult = 'result' in message && typeof message.result === 'string'
-        ? message.result
-        : null;
-      sendEventToHost({
-        type: 'result',
-        status: 'success',
-        result: latestResult,
-        sessionId: isolated ? undefined : sessionId,
-        timestamp: new Date().toISOString(),
-      });
-    }
+  } catch (err) {
+    // AbortError is expected when watchdog or SIGTERM aborts the query
+    const isAbort = err instanceof Error && (err.name === 'AbortError' || abort.signal.aborted);
+    if (!isAbort) throw err;
+    log(`Query aborted${shuttingDown ? ' (shutdown)' : ' (watchdog)'}`);
+  } finally {
+    clearInterval(watchdog);
+    activeQuery = null;
+    activeAbort = null;
   }
 
   if (!isolated) {
@@ -398,10 +451,31 @@ async function main(): Promise<void> {
   }
   loadSessionState();
 
+  // ── Graceful shutdown on SIGTERM (sent by `docker stop`) ──
+  process.on('SIGTERM', () => {
+    log('SIGTERM received — shutting down gracefully');
+    shuttingDown = true;
+
+    // Abort the running query if there is one
+    if (activeAbort) {
+      activeAbort.abort();
+    }
+
+    // Notify host that any in-flight query was interrupted
+    sendEventToHost({
+      type: 'result',
+      status: 'error',
+      error: 'Agent is restarting — please resend your message.',
+      result: null,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   let shouldStop = false;
-  while (!shouldStop) {
+  while (!shouldStop && !shuttingDown) {
     const inboundFiles = listInboundMessagesSorted();
     for (const filePath of inboundFiles) {
+      if (shuttingDown) break;
       try {
         const payload = JSON.parse(fs.readFileSync(filePath, 'utf8')) as InboundEnvelope;
         const result = await processInbound(payload, sdkEnv, externalMcpServers);
@@ -421,10 +495,12 @@ async function main(): Promise<void> {
         archiveMessage(filePath);
       }
     }
-    if (!shouldStop) {
+    if (!shouldStop && !shuttingDown) {
       await sleep(POLL_MS);
     }
   }
+
+  log('Main loop exited cleanly');
 }
 
 main().catch((err) => {

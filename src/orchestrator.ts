@@ -3,11 +3,10 @@ import { IPC_POLL_MS, type BitclawPaths } from './config.js';
 import { checkAndFireTasks, ensureTasksDir } from './cron.js';
 import { formatOutboundEvent } from './format.js';
 import { receiveFromAgent, sendToAgent } from './ipc.js';
-import { ensureContainer, restartContainer, stopContainer } from './runtime.js';
+import { ensureContainer, stopContainer } from './runtime.js';
 import { generateStatus } from './status.js';
 import type { Channel } from './types.js';
 
-const RESTART_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const TASK_POLL_MS = 60_000; // 60 seconds
 const TYPING_TIMEOUT_MS = 10_000; // 10 seconds safety net
 
@@ -21,7 +20,6 @@ export class Orchestrator {
   private projectRoot: string;
   private paths: BitclawPaths | null = null;
   private polling = false;
-  private restartTimer: ReturnType<typeof setInterval> | null = null;
   private taskTimer: ReturnType<typeof setInterval> | null = null;
   private typingTimeout: ReturnType<typeof setTimeout> | null = null;
   private lastTaskMinute = '';
@@ -62,11 +60,6 @@ export class Orchestrator {
     }, TASK_POLL_MS);
 
     console.log('Bitclaw running. Listening for Telegram messages. Ctrl+C to stop.');
-
-    // Auto-restart every 4 hours
-    this.restartTimer = setInterval(() => {
-      this.restart();
-    }, RESTART_INTERVAL_MS);
 
     // Graceful shutdown
     const onSignal = () => this.stop();
@@ -123,18 +116,9 @@ export class Orchestrator {
     }
   }
 
-  private restart(): void {
-    const result = restartContainer(this.projectRoot);
-    this.paths = result.paths;
-  }
-
   async stop(): Promise<void> {
     this.polling = false;
     this.clearTypingTimeout();
-    if (this.restartTimer) {
-      clearInterval(this.restartTimer);
-      this.restartTimer = null;
-    }
     if (this.taskTimer) {
       clearInterval(this.taskTimer);
       this.taskTimer = null;

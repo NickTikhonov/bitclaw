@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { IPC_POLL_MS, type BitclawPaths } from '../src/config.js';
 import { loadProjectEnv } from '../src/env.js';
 import { receiveFromAgent, sendToAgent } from '../src/ipc.js';
-import { restartContainer, stopContainer } from '../src/runtime.js';
+import { startContainer, stopContainer } from '../src/runtime.js';
 import { formatOutboundEvent, isExitCommand, isHelpCommand, isRestartCommand } from './repl-utils.js';
 
 function startBackgroundPoller(paths: BitclawPaths): { stop: () => void } {
@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   loadProjectEnv(projectRoot);
 
   console.log('Starting container...');
-  const started = restartContainer(projectRoot);
+  const started = startContainer(projectRoot);
   const paths = started.paths;
 
   // Flush any old outbound events so each run starts clean.
@@ -78,7 +78,7 @@ async function main(): Promise<void> {
       }
       if (isRestartCommand(trimmed)) {
         console.log('Restarting container...');
-        restartContainer(projectRoot);
+        startContainer(projectRoot);
         continue;
       }
       if (isExitCommand(trimmed)) {
