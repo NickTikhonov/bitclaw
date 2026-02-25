@@ -2,7 +2,7 @@ import { OutboundEnvelope } from './types.js';
 
 /**
  * Format an outbound event for display. Returns null for events that
- * should not be forwarded to channels (e.g. internal tool_call telemetry).
+ * should not be forwarded to channels (e.g. internal tool_calls telemetry).
  */
 export function formatOutboundEvent(event: OutboundEnvelope): string | null {
   if (event.type === 'result') {
@@ -17,8 +17,8 @@ export function formatOutboundEvent(event: OutboundEnvelope): string | null {
     return String(event.text ?? '');
   }
 
-  // tool_call and typing events are handled by the orchestrator directly
-  if (event.type === 'tool_call' || event.type === 'typing') {
+  // tool_calls and typing events are handled by the orchestrator directly
+  if (event.type === 'tool_calls' || event.type === 'typing') {
     return null;
   }
 

@@ -1,9 +1,9 @@
-export type InboundType = 'messages' | 'task' | 'heartbeat' | 'shutdown';
+export type InboundType = 'messages' | 'task' | 'shutdown';
 
 export type OutboundType =
   | 'result'
   | 'message'
-  | 'tool_call'
+  | 'tool_calls'
   | 'typing';
 
 export interface InboundEnvelopeBase {
@@ -22,11 +22,6 @@ export interface InboundTask extends InboundEnvelopeBase {
   prompt: string;
 }
 
-export interface InboundHeartbeat extends InboundEnvelopeBase {
-  type: 'heartbeat';
-  prompt: string;
-}
-
 export interface InboundShutdown extends InboundEnvelopeBase {
   type: 'shutdown';
 }
@@ -34,7 +29,6 @@ export interface InboundShutdown extends InboundEnvelopeBase {
 export type InboundEnvelope =
   | InboundMessages
   | InboundTask
-  | InboundHeartbeat
   | InboundShutdown;
 
 export interface OutboundEnvelope {

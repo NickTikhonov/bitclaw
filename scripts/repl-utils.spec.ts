@@ -48,15 +48,13 @@ test('formatOutboundEvent returns message text directly', () => {
   );
 });
 
-test('formatOutboundEvent returns null for tool_call events', () => {
+test('formatOutboundEvent returns null for tool_calls events', () => {
   assert.equal(
     formatOutboundEvent({
-      type: 'tool_call',
-      toolName: 'mcp__bitclaw__send_message',
-      isMcp: true,
-      mcpServer: 'bitclaw',
-      mcpTool: 'send_message',
-      toolUseId: 'toolu_123',
+      type: 'tool_calls',
+      tools: [
+        { toolName: 'mcp__bitclaw__send_message', isMcp: true, mcpServer: 'bitclaw', mcpTool: 'send_message', toolUseId: 'toolu_123' },
+      ],
       timestamp: new Date().toISOString(),
     }),
     null,

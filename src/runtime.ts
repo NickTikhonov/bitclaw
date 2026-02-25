@@ -91,19 +91,3 @@ export function startContainer(projectRoot: string): RuntimeStartResult {
 
   return { paths, hasAuthSecrets: !!(secrets.ANTHROPIC_API_KEY || secrets.CLAUDE_CODE_OAUTH_TOKEN) };
 }
-
-export function isContainerRunning(): boolean {
-  const r = spawnSync('docker', ['inspect', '-f', '{{.State.Running}}', CONTAINER_NAME], { encoding: 'utf8' });
-  return r.stdout?.trim() === 'true';
-}
-
-export function ensureContainer(projectRoot: string): RuntimeStartResult {
-  if (isContainerRunning()) {
-    loadProjectEnv(projectRoot);
-    const paths = createBitclawPaths();
-    return { paths, hasAuthSecrets: true };
-  }
-  return startContainer(projectRoot);
-}
-
-

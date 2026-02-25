@@ -16,7 +16,7 @@ import {
   sendEventToHost,
 } from './ipc-utils.js';
 
-type InboundType = 'messages' | 'task' | 'heartbeat' | 'shutdown';
+type InboundType = 'messages' | 'task' | 'shutdown';
 
 interface InboundEnvelope {
   type: InboundType;
@@ -24,17 +24,6 @@ interface InboundEnvelope {
   text?: string;
   prompt?: string;
   taskId?: string;
-}
-
-interface McpServerBootstrap {
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-}
-
-interface BootstrapInput {
-  secrets?: Record<string, string>;
-  mcpServers?: Record<string, McpServerBootstrap>;
 }
 
 const POLL_MS = 400;
@@ -54,39 +43,8 @@ let shuttingDown = false;
 let activeQuery: Query | null = null;
 let activeAbort: AbortController | null = null;
 
-const SYSTEM_PROMPT = `You are BitClaw, a smart AI agent.
-
-## Files you have access to:
-
-- working directory: /workspace/workspace
-
-## Instructions
-
-- Read AGENT.md in your working directory to understand your purpose and how to behave. You can edit this file when the user asks you to behave differently.
-- You have full filesystem access within /workspace/workspace. Use it to store notes, code, or any artifacts.
-- You can run shell commands via Bash, read/write/edit files, search the web, and use MCP tools.
-- Be direct and efficient. Avoid unnecessary preamble.
-
-## How messages work
-
-Your final response text is automatically delivered to the user — just write your answer normally.
-Only use the send_message tool if you need to share a progress update WHILE you are still working on a longer task (e.g. "Searching your emails now..." or "Found 3 results, summarizing..."). Do not use send_message for your final answer.
-
-## Tasks
-
-You can create recurring and one-shot tasks using MCP tools. Tasks are stored as JSON files in /workspace/workspace/tasks/.
-
-- create_task: schedule a new task (5-field cron expression for recurring, ISO date for one-shot)
-- list_tasks: list all tasks with their schedules and prompts
-- read_task: read the full definition of a specific task
-- edit_task: update the schedule or prompt of an existing task
-- delete_task: remove a task
-
-Examples:
-- Recurring: create_task(name="daily-email-check", schedule="0 9 * * *", prompt="Check my emails and summarize them")
-- One-shot: create_task(name="remind-meeting", schedule="2026-03-01T14:00:00Z", prompt="Remind me about the team meeting")
-
-One-shot tasks are automatically deleted after they fire. The host checks for due tasks every 60 seconds.`;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, 'system-prompt.txt'), 'utf8');
 
 let sessionId: string | undefined;
 let resumeAt: string | undefined;
@@ -108,29 +66,32 @@ function log(message: string): void {
   console.error(`[bitclaw-agent-runner] ${message}`);
 }
 
-async function readBootstrapFromStdin(timeoutMs = 300): Promise<string> {
+interface McpServerBootstrap {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+interface BootstrapInput {
+  secrets?: Record<string, string>;
+  mcpServers?: Record<string, McpServerBootstrap>;
+}
+
+async function readConfigFromStdin(): Promise<BootstrapInput> {
   return new Promise((resolve) => {
     let data = '';
-    let settled = false;
-    let timer: NodeJS.Timeout | undefined;
-
-    const settle = (value: string) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      resolve(value);
-    };
-
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', (chunk) => {
       data += chunk;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => settle(data), timeoutMs);
     });
-    process.stdin.on('end', () => settle(data));
-    process.stdin.on('error', () => settle(data));
-
-    timer = setTimeout(() => settle(data), timeoutMs);
+    process.stdin.on('end', () => {
+      const bootstrap: BootstrapInput = data.trim() ? JSON.parse(data) : {};
+      resolve(bootstrap);
+    });
+    process.stdin.on('error', () => {
+      const bootstrap: BootstrapInput = data.trim() ? JSON.parse(data) : {};
+      resolve(bootstrap);
+    });
   });
 }
 
@@ -169,9 +130,6 @@ function loadSessionState(): void {
     if (typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0) {
       sessionId = parsed.sessionId;
     }
-    // resumeAt is intentionally NOT loaded from disk — it's ephemeral
-    // and only valid within the same process lifetime. Persisting it
-    // across restarts causes hangs when the server-side checkpoint expires.
     if (sessionId) {
       log(`Loaded persistent session state (sessionId: yes)`);
     }
@@ -194,20 +152,10 @@ function saveSessionState(): void {
 }
 
 function parseMcpToolName(toolName: string): { isMcp: boolean; mcpServer?: string; mcpTool?: string } {
-  if (!toolName.startsWith('mcp__')) {
-    return { isMcp: false };
-  }
-
+  if (!toolName.startsWith('mcp__')) return { isMcp: false };
   const parts = toolName.split('__');
-  if (parts.length < 3) {
-    return { isMcp: true };
-  }
-
-  return {
-    isMcp: true,
-    mcpServer: parts[1],
-    mcpTool: parts.slice(2).join('__'),
-  };
+  if (parts.length < 3) return { isMcp: true };
+  return { isMcp: true, mcpServer: parts[1], mcpTool: parts.slice(2).join('__') };
 }
 
 function extractToolCalls(message: unknown): ToolCallEvent[] {
@@ -253,37 +201,34 @@ function clearSession(): void {
   try { fs.unlinkSync(SESSION_STATE_FILE); } catch { /* already gone */ }
 }
 
-async function runClaudeQuery(
+async function runAgentTurn(
   prompt: string,
   sdkEnv: Record<string, string | undefined>,
-  isolated: boolean,
   externalMcpServers: Record<string, McpServerBootstrap>,
 ): Promise<void> {
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
-  let latestResult: string | null = null;
-
-  const externalMcpToolPatterns = Object.keys(externalMcpServers).map((name) => `mcp__${name}__*`);
-
-  let lastTypingAt = 0;
   const TYPING_THROTTLE_MS = 1000;
 
-  // ── Watchdog state ──
+  let latestResult: string | null = null;
+  let lastTypingAt = 0;
+
+  const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
+  const externalMcpToolPatterns = Object.keys(externalMcpServers).map((name) => `mcp__${name}__*`);
+
   let lastEventAt = Date.now();
-  let gotMeaningfulEvent = false;
+  let harnessEventInTimeoutPeriod = false;
 
   const watchdog = setInterval(() => {
     const silentMs = Date.now() - lastEventAt;
 
-    if (!gotMeaningfulEvent && silentMs > INIT_TIMEOUT_MS) {
-      log(`Watchdog: no meaningful event after ${(silentMs / 1000).toFixed(0)}s — stale session`);
+    if (!harnessEventInTimeoutPeriod && silentMs > INIT_TIMEOUT_MS) {
+      log(`Watchdog: no event after ${(silentMs / 1000).toFixed(0)}s — clearing session`);
       clearSession();
       // Abort the query so the for-await exits instead of hard-killing
       if (activeAbort) activeAbort.abort();
       return;
     }
 
-    if (gotMeaningfulEvent && silentMs > MID_QUERY_TIMEOUT_MS) {
+    if (harnessEventInTimeoutPeriod && silentMs > MID_QUERY_TIMEOUT_MS) {
       log(`Watchdog: SDK silent for ${(silentMs / 1000).toFixed(0)}s mid-query — aborting`);
       if (activeAbort) activeAbort.abort();
       return;
@@ -300,8 +245,8 @@ async function runClaudeQuery(
       abortController: abort,
       systemPrompt: SYSTEM_PROMPT,
       cwd: WORKSPACE_DIR,
-      resume: isolated ? undefined : sessionId,
-      resumeSessionAt: isolated ? undefined : resumeAt,
+      resume: sessionId,
+      resumeSessionAt: resumeAt,
       allowedTools: [
         'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep',
         'WebSearch', 'WebFetch', 'Task', 'TaskOutput', 'TaskStop',
@@ -332,6 +277,7 @@ async function runClaudeQuery(
   try {
     for await (const message of q) {
       lastEventAt = Date.now();
+      harnessEventInTimeoutPeriod = true;
 
       // Emit throttled typing events (at most 1 per second)
       const now = Date.now();
@@ -340,33 +286,26 @@ async function runClaudeQuery(
         lastTypingAt = now;
       }
 
+      if (message.type === 'system' && message.subtype === 'init') {
+        sessionId = message.session_id;
+        saveSessionState();
+      }
+
       const toolCalls = extractToolCalls(message);
-      for (const toolCall of toolCalls) {
-        gotMeaningfulEvent = true;
+      if (toolCalls.length > 0) {
         sendEventToHost({
-          type: 'tool_call',
-          toolName: toolCall.toolName,
-          toolUseId: toolCall.toolUseId,
-          isMcp: toolCall.isMcp,
-          mcpServer: toolCall.mcpServer,
-          mcpTool: toolCall.mcpTool,
+          type: 'tool_calls',
+          tools: toolCalls,
           timestamp: new Date().toISOString(),
         });
       }
 
-      if (message.type === 'system' && message.subtype === 'init' && !isolated) {
-        sessionId = message.session_id;
-        saveSessionState();
-      }
       if (message.type === 'assistant') {
-        gotMeaningfulEvent = true;
-        if ('uuid' in message && !isolated) {
+        if ('uuid' in message) {
           resumeAt = message.uuid;
-          saveSessionState();
         }
       }
       if (message.type === 'result') {
-        gotMeaningfulEvent = true;
         latestResult = 'result' in message && typeof message.result === 'string'
           ? message.result
           : null;
@@ -374,7 +313,7 @@ async function runClaudeQuery(
           type: 'result',
           status: 'success',
           result: latestResult,
-          sessionId: isolated ? undefined : sessionId,
+          sessionId,
           timestamp: new Date().toISOString(),
         });
       }
@@ -390,43 +329,23 @@ async function runClaudeQuery(
     activeAbort = null;
   }
 
-  if (!isolated) {
-    saveSessionState();
-  }
+  saveSessionState();
 }
 
 async function processInbound(
   inbound: InboundEnvelope,
   sdkEnv: Record<string, string | undefined>,
   externalMcpServers: Record<string, McpServerBootstrap>,
-): Promise<{ shouldStop: boolean }> {
+): Promise<{ shouldAbort: boolean }> {
   if (inbound.type === 'shutdown') {
-    return { shouldStop: true };
+    return { shouldAbort: true };
   }
 
-  if (inbound.type === 'messages') {
-    if (!sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.CLAUDE_CODE_OAUTH_TOKEN) {
-      throw new Error('Missing Claude auth credentials (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)');
-    }
-    await runClaudeQuery(inbound.text ?? '', sdkEnv, false, externalMcpServers);
-    return { shouldStop: false };
-  }
-
-  if (inbound.type === 'task') {
-    if (!sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.CLAUDE_CODE_OAUTH_TOKEN) {
-      throw new Error('Missing Claude auth credentials (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)');
-    }
-    const taskLabel = inbound.taskId ? `[Scheduled task: ${inbound.taskId}] ` : '[Scheduled task] ';
-    await runClaudeQuery(taskLabel + (inbound.prompt ?? ''), sdkEnv, false, externalMcpServers);
-    return { shouldStop: false };
-  }
-
-  if (inbound.type === 'heartbeat') {
-    if (!sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.CLAUDE_CODE_OAUTH_TOKEN) {
-      throw new Error('Missing Claude auth credentials (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)');
-    }
-    await runClaudeQuery(inbound.prompt ?? 'heartbeat', sdkEnv, true, externalMcpServers);
-    return { shouldStop: false };
+  if (inbound.type === 'messages' || inbound.type === 'task') {
+    let prompt = '';
+    prompt = inbound.type === 'messages' ? `${inbound.text}` : `[Scheduled task: ${inbound.taskId}]\n${inbound.prompt}`;
+    await runAgentTurn(prompt, sdkEnv, externalMcpServers);
+    return { shouldAbort: false };
   }
 
   throw new Error(`Unsupported inbound type: ${inbound.type}`);
@@ -442,30 +361,28 @@ async function main(): Promise<void> {
   fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
 
-  const stdin = await readBootstrapFromStdin();
-  const bootstrap: BootstrapInput = stdin.trim() ? JSON.parse(stdin) : {};
-  const sdkEnv = buildSdkEnv(bootstrap.secrets ?? {});
-  const externalMcpServers = bootstrap.mcpServers ?? {};
-  if (Object.keys(externalMcpServers).length > 0) {
-    log(`External MCP servers: ${Object.keys(externalMcpServers).join(', ')}`);
+  const bootConfig = await readConfigFromStdin();
+  const sdkEnv = buildSdkEnv(bootConfig.secrets ?? {});
+  if (!sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.CLAUDE_CODE_OAUTH_TOKEN) {
+    throw new Error('Missing Claude auth credentials (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)');
   }
+  const externalMcpServers = bootConfig.mcpServers ?? {};
+  log(`External MCP servers: ${Object.keys(externalMcpServers).join(', ')}`);
+
   loadSessionState();
 
-  // ── Graceful shutdown on SIGTERM (sent by `docker stop`) ──
   process.on('SIGTERM', () => {
     log('SIGTERM received — shutting down gracefully');
     shuttingDown = true;
 
-    // Abort the running query if there is one
     if (activeAbort) {
       activeAbort.abort();
     }
 
-    // Notify host that any in-flight query was interrupted
     sendEventToHost({
       type: 'result',
       status: 'error',
-      error: 'Agent is restarting — please resend your message.',
+      error: 'Agent is restarting',
       result: null,
       timestamp: new Date().toISOString(),
     });
@@ -480,7 +397,7 @@ async function main(): Promise<void> {
         const payload = JSON.parse(fs.readFileSync(filePath, 'utf8')) as InboundEnvelope;
         const result = await processInbound(payload, sdkEnv, externalMcpServers);
         archiveMessage(filePath);
-        if (result.shouldStop) {
+        if (result.shouldAbort) {
           shouldStop = true;
           break;
         }

@@ -58,23 +58,13 @@ RUN npm install -g @example/mcp-server
 
 ### Finding the correct entrypoint path
 
-After adding the package to the Dockerfile and rebuilding, run:
+To discover the entrypoint before the next restart, do a quick one-off build and inspect:
 
 ```bash
 docker run --rm bitclaw-agent node -e "const p=require('/usr/local/lib/node_modules/@example/mcp-server/package.json'); console.log(p.main || Object.values(p.bin || {})[0])"
 ```
 
 This prints the relative entrypoint (e.g. `dist/index.js`). Prepend `/usr/local/lib/node_modules/<package>/` to get the full path.
-
-### Rebuilding the container
-
-After any Dockerfile change:
-
-```bash
-docker build -f container/Dockerfile -t bitclaw-agent .
-```
-
-Then restart the service (see "After All Changes" below).
 
 ## Flow
 
@@ -116,13 +106,9 @@ Use the `/add-gcal` skill — it handles Calendar API setup, OAuth (reusing Gmai
 
 If you don't know the package name, search the web for `"<service> mcp server npm"` to find it.
 
-2. **Pre-install in the Dockerfile.** Add a `RUN npm install -g <package>` line to `container/Dockerfile` (before `WORKDIR /app`), then rebuild the image:
+2. **Pre-install in the Dockerfile.** Add a `RUN npm install -g <package>` line to `container/Dockerfile` (before `WORKDIR /app`). The image will be rebuilt automatically on next restart.
 
-```bash
-docker build -f container/Dockerfile -t bitclaw-agent .
-```
-
-3. **Find the entrypoint path** inside the built image:
+3. **Find the entrypoint path.** After the Dockerfile change, rebuild once to inspect:
 
 ```bash
 docker run --rm bitclaw-agent node -e "const p=require('/usr/local/lib/node_modules/<package>/package.json'); console.log(p.main || Object.values(p.bin || {})[0])"
@@ -211,7 +197,7 @@ To remove a mount: delete its entry from `mounts` in `bitclaw.config.json`.
 
 ## After All Changes
 
-Restart the service automatically so changes take effect:
+Restarting the service rebuilds the Docker image and starts a fresh container automatically — no separate build step needed.
 
 ```bash
 launchctl kickstart -k gui/$(id -u)/com.bitclaw

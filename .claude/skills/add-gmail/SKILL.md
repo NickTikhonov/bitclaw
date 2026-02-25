@@ -117,11 +117,7 @@ Add the Gmail MCP package to `container/Dockerfile` (before the `WORKDIR /app` l
 RUN npm install -g @gongrzhe/server-gmail-autoauth-mcp
 ```
 
-Then rebuild the container:
-
-```bash
-docker build -f container/Dockerfile -t bitclaw-agent .
-```
+The image will be rebuilt automatically when the service restarts (see final step).
 
 ## 7. Add Gmail to Config
 

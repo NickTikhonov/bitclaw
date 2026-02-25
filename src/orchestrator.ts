@@ -3,11 +3,11 @@ import { IPC_POLL_MS, type BitclawPaths } from './config.js';
 import { checkAndFireTasks, ensureTasksDir } from './cron.js';
 import { formatOutboundEvent } from './format.js';
 import { receiveFromAgent, sendToAgent } from './ipc.js';
-import { ensureContainer, stopContainer } from './runtime.js';
+import { startContainer, stopContainer } from './runtime.js';
 import { generateStatus } from './status.js';
 import type { Channel } from './types.js';
 
-const TASK_POLL_MS = 60_000; // 60 seconds
+const TASK_POLL_MS = 40_000; // 60 seconds
 const TYPING_TIMEOUT_MS = 10_000; // 10 seconds safety net
 
 export interface OrchestratorOptions {
@@ -22,8 +22,6 @@ export class Orchestrator {
   private polling = false;
   private taskTimer: ReturnType<typeof setInterval> | null = null;
   private typingTimeout: ReturnType<typeof setTimeout> | null = null;
-  private lastTaskMinute = '';
-
   constructor(opts: OrchestratorOptions) {
     this.channel = opts.channel;
     this.projectRoot = opts.projectRoot;
@@ -41,7 +39,7 @@ export class Orchestrator {
     });
 
     // Boot container + channel
-    this.paths = ensureContainer(this.projectRoot).paths;
+    this.paths = startContainer(this.projectRoot).paths;
     await this.channel.start();
 
     // Ensure tasks directory exists
@@ -56,7 +54,7 @@ export class Orchestrator {
     this.taskTimer = setInterval(() => {
       if (!this.paths) return;
       const td = path.join(this.paths.workspaceDir, 'tasks');
-      this.lastTaskMinute = checkAndFireTasks(td, this.paths, this.lastTaskMinute);
+      checkAndFireTasks(td, this.paths);
     }, TASK_POLL_MS);
 
     console.log('Bitclaw running. Listening for Telegram messages. Ctrl+C to stop.');
@@ -93,9 +91,11 @@ export class Orchestrator {
             return;
           }
 
-          // Tool call events — generate and show a fun status
-          if (event.type === 'tool_call') {
-            const toolName = String(event.toolName ?? '');
+          // Tool call events — generate and show a fun status for the last tool
+          if (event.type === 'tool_calls') {
+            const tools = Array.isArray(event.tools) ? event.tools as { toolName?: string }[] : [];
+            const last = tools[tools.length - 1];
+            const toolName = typeof last?.toolName === 'string' ? last.toolName : '';
             if (toolName) {
               this.channel.setToolStatus(generateStatus(toolName));
             }

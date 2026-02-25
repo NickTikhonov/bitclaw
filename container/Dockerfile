@@ -8,6 +8,8 @@ RUN npm install
 
 COPY container/src /app/src
 RUN npm run build
+# Copy non-TS assets that live alongside compiled JS
+COPY container/src/system-prompt.txt /app/dist/system-prompt.txt
 
 USER node
 CMD ["node", "/app/dist/index.js"]

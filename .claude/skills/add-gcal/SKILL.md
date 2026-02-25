@@ -148,10 +148,7 @@ If there's no existing `npm install -g` line, add before `WORKDIR /app`:
 RUN npm install -g @cocal/google-calendar-mcp
 ```
 
-Then rebuild the container:
-```bash
-docker build -f container/Dockerfile -t bitclaw-agent .
-```
+The image will be rebuilt automatically when the service restarts (see final step).
 
 ## 7. Add Calendar to Config
 

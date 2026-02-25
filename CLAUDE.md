@@ -11,7 +11,7 @@ Lightweight AI agent that runs Claude in a Docker container, communicating via f
 | `src/telegram.ts` | Telegram channel (grammy) |
 | `src/ipc.ts` | Host-side IPC: send inbound, poll outbound |
 | `src/cron.ts` | File-based task scheduler |
-| `src/runtime.ts` | Docker build/start/stop/restart |
+| `src/runtime.ts` | Docker build/start/stop |
 | `src/config.ts` | Paths, constants, directory setup |
 | `container/src/index.ts` | Agent runner inside the container (Claude SDK) |
 | `container/src/ipc-mcp-stdio.ts` | MCP tools: send_message, task CRUD |
@@ -50,11 +50,17 @@ npm test         # Run tests
 npm run sloc     # Count source lines
 ```
 
-## Service Management (macOS)
+## Lifecycle
 
-```bash
-launchctl kickstart -k gui/$(id -u)/com.bitclaw   # Restart the service
-launchctl kill SIGTERM gui/$(id -u)/com.bitclaw    # Stop the service
-tail -f ~/.bitclaw/logs/app.log                    # Watch logs
-tail -f ~/.bitclaw/logs/app.error.log              # Watch error logs
-```
+`startContainer()` always rebuilds the Docker image before launching a new container.
+So **restarting the service is all you need after any code or Dockerfile change** — no separate build step.
+
+| Action | Command |
+|--------|---------|
+| Restart (rebuild + fresh container) | `launchctl kickstart -k gui/$(id -u)/com.bitclaw` |
+| Stop | `launchctl kill SIGTERM gui/$(id -u)/com.bitclaw` |
+| Host logs | `tail -f ~/.bitclaw/logs/app.log` |
+| Host errors | `tail -f ~/.bitclaw/logs/app.error.log` |
+| Container logs | `tail -f ~/.bitclaw/logs/container.log` |
+
+On restart: SIGTERM → host stops container gracefully (`docker stop`) → host exits → launchd restarts → image rebuilt → new container started.

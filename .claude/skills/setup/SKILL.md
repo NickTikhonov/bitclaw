@@ -111,6 +111,8 @@ This allows the bot to read all messages, not just commands.
 
 **If CONTAINER_IMAGE=true:** Ask user if they want to rebuild or skip. If skipping, move on.
 
+> Note: Future restarts auto-rebuild the image. This step validates the first build.
+
 Build the container image:
 ```bash
 docker build -t bitclaw-agent:dev -f container/Dockerfile .

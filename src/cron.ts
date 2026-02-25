@@ -7,40 +7,54 @@ import { sendToAgent } from './ipc.js';
 export interface TaskDefinition {
   schedule: string;
   prompt: string;
+  lastRunAt?: string; // ISO timestamp of most recent execution
 }
 
 export function ensureTasksDir(tasksDir: string): void {
   fs.mkdirSync(tasksDir, { recursive: true });
 }
 
-export function isOneShot(schedule: string): boolean {
-  // Cron expressions contain spaces between fields; ISO dates don't start with digits followed by spaces
+export function isTaskOneShot(schedule: string): boolean {
+  // Cron expressions contain spaces between fields; ISO dates don't
   if (/^\d{1,2}\s/.test(schedule) || schedule.startsWith('*')) return false;
   const d = new Date(schedule);
   return !Number.isNaN(d.getTime());
 }
 
-export function isDue(schedule: string, now: Date): boolean {
-  if (isOneShot(schedule)) {
-    return now >= new Date(schedule);
-  }
-
+/**
+ * For a cron schedule, return the most recent time it was due (truncated to the minute).
+ * Returns null if the expression is invalid.
+ */
+export function lastScheduledTime(schedule: string, now: Date): Date | null {
   try {
     const expr = CronExpressionParser.parse(schedule, { currentDate: now });
-    const prev = expr.prev().toDate();
-    // Match if prev falls in the same minute as now
-    return truncateToMinute(prev).getTime() === truncateToMinute(now).getTime();
+    return expr.prev().toDate();
   } catch {
-    return false;
+    return null;
   }
 }
 
-export function truncateToMinute(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes());
-}
+/**
+ * Determine whether a task should fire. A task is due when:
+ *
+ * - **Cron**: the most recent scheduled time (`prev()`) is after the task's `lastRunAt`.
+ *   This catches exact matches AND missed runs (e.g. laptop was asleep).
+ *
+ * - **One-shot**: `now >= schedule` and the task has never run (`lastRunAt` is absent).
+ */
+export function isTaskDue(task: TaskDefinition, now: Date): boolean {
+  const lastRun = task.lastRunAt ? new Date(task.lastRunAt) : null;
 
-export function minuteKey(d: Date): string {
-  return truncateToMinute(d).toISOString();
+  if (isTaskOneShot(task.schedule)) {
+    // One-shots fire once: when their time has passed and they haven't run yet
+    return !lastRun && now >= new Date(task.schedule);
+  }
+
+  const prev = lastScheduledTime(task.schedule, now);
+  if (!prev) return false;
+
+  // Fire if prev is after lastRun (or if never run)
+  return !lastRun || prev.getTime() > lastRun.getTime();
 }
 
 export function listTaskFiles(tasksDir: string): string[] {
@@ -55,26 +69,33 @@ export function readTask(filePath: string): TaskDefinition | null {
   try {
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, unknown>;
     if (typeof raw.schedule !== 'string' || typeof raw.prompt !== 'string') return null;
-    return { schedule: raw.schedule, prompt: raw.prompt };
+    return {
+      schedule: raw.schedule,
+      prompt: raw.prompt,
+      lastRunAt: typeof raw.lastRunAt === 'string' ? raw.lastRunAt : undefined,
+    };
   } catch {
     return null;
   }
 }
 
+function updateTaskLastRun(filePath: string, task: TaskDefinition, now: Date): void {
+  try {
+    const updated = { ...task, lastRunAt: now.toISOString() };
+    fs.writeFileSync(filePath, JSON.stringify(updated, null, 2));
+  } catch { /* best-effort */ }
+}
+
 export function checkAndFireTasks(
   tasksDir: string,
   paths: BitclawPaths,
-  lastMinute: string,
-): string {
+): void {
   const now = new Date();
-  const currentMinute = minuteKey(now);
-  if (currentMinute === lastMinute) return lastMinute;
 
   for (const filePath of listTaskFiles(tasksDir)) {
     const task = readTask(filePath);
     if (!task) continue;
-
-    if (!isDue(task.schedule, now)) continue;
+    if (!isTaskDue(task, now)) continue;
 
     sendToAgent(paths, {
       type: 'task',
@@ -83,10 +104,10 @@ export function checkAndFireTasks(
       timestamp: now.toISOString(),
     });
 
-    if (isOneShot(task.schedule)) {
+    if (isTaskOneShot(task.schedule)) {
       try { fs.unlinkSync(filePath); } catch { /* already gone */ }
+    } else {
+      updateTaskLastRun(filePath, task, now);
     }
   }
-
-  return currentMinute;
 }
