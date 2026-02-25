@@ -41,6 +41,23 @@ const WORKSPACE_DIR = '/workspace/workspace';
 const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
 const SESSION_STATE_FILE = '/home/node/.claude/bitclaw-session.json';
 
+/**
+ * Watchdog timeouts.
+ *
+ * The Claude Agent SDK's query() returns an async iterator that may NEVER YIELD
+ * if session resume fails (known SDK bug). Timeout logic inside the for-await
+ * loop is useless — we need an external watchdog on a setInterval.
+ *
+ * See: https://github.com/anthropics/claude-agent-sdk-python/issues/208
+ *      https://github.com/anthropics/claude-code/issues/8069
+ */
+/** Max ms to wait for first meaningful event (assistant/tool/result) after query starts */
+const INIT_TIMEOUT_MS = 60_000;
+/** Max ms of silence mid-conversation before assuming API connection is dead */
+const MID_QUERY_TIMEOUT_MS = 120_000;
+/** Watchdog poll interval */
+const WATCHDOG_POLL_MS = 10_000;
+
 const SYSTEM_PROMPT = `You are BitClaw, a smart AI agent.
 
 ## Files you have access to:
@@ -233,6 +250,13 @@ function extractToolCalls(message: unknown): ToolCallEvent[] {
   return results;
 }
 
+function clearSession(): void {
+  log('Clearing stale session state');
+  sessionId = undefined;
+  resumeAt = undefined;
+  try { fs.unlinkSync(SESSION_STATE_FILE); } catch { /* already gone */ }
+}
+
 async function runClaudeQuery(
   prompt: string,
   sdkEnv: Record<string, string | undefined>,
@@ -241,100 +265,119 @@ async function runClaudeQuery(
 ): Promise<void> {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
-  let latestResult: string | null = null;
-
-  // Build allowed tool patterns for external MCP servers
   const externalMcpToolPatterns = Object.keys(externalMcpServers).map((name) => `mcp__${name}__*`);
 
+  let latestResult: string | null = null;
   let lastTypingAt = 0;
   const TYPING_THROTTLE_MS = 1000;
 
-  for await (const message of query({
-    prompt,
-    options: {
-      systemPrompt: SYSTEM_PROMPT,
-      cwd: WORKSPACE_DIR,
-      resume: isolated ? undefined : sessionId,
-      resumeSessionAt: isolated ? undefined : resumeAt,
-      allowedTools: [
-        'Bash',
-        'Read',
-        'Write',
-        'Edit',
-        'Glob',
-        'Grep',
-        'WebSearch',
-        'WebFetch',
-        'Task',
-        'TaskOutput',
-        'TaskStop',
-        'TeamCreate',
-        'TeamDelete',
-        'SendMessage',
-        'TodoWrite',
-        'ToolSearch',
-        'Skill',
-        'NotebookEdit',
-        'mcp__bitclaw__*',
-        ...externalMcpToolPatterns,
-      ],
-      env: sdkEnv,
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
-      settingSources: ['project', 'user'],
-      mcpServers: {
-        bitclaw: {
-          command: 'node',
-          args: [mcpServerPath],
-          env: {},
+  // --- External watchdog (runs outside the for-await loop) ---
+  // The SDK's async iterator may NEVER YIELD if session resume fails,
+  // so in-loop timeout checks are useless. This setInterval runs
+  // independently and kills the process if the SDK goes silent.
+  let lastEventAt = Date.now();
+  let gotMeaningfulEvent = false;
+
+  const watchdog = setInterval(() => {
+    const silentMs = Date.now() - lastEventAt;
+
+    if (!gotMeaningfulEvent && silentMs > INIT_TIMEOUT_MS) {
+      // Never got a real event — session is likely stale/expired
+      log(`Watchdog: no meaningful event after ${(silentMs / 1000).toFixed(0)}s — stale session`);
+      clearSession();
+      process.exit(1);
+    }
+
+    if (gotMeaningfulEvent && silentMs > MID_QUERY_TIMEOUT_MS) {
+      // Was working but went silent — API connection died mid-conversation
+      log(`Watchdog: SDK silent for ${(silentMs / 1000).toFixed(0)}s mid-query — killing process`);
+      process.exit(1);
+    }
+  }, WATCHDOG_POLL_MS);
+
+  try {
+    for await (const message of query({
+      prompt,
+      options: {
+        systemPrompt: SYSTEM_PROMPT,
+        cwd: WORKSPACE_DIR,
+        resume: isolated ? undefined : sessionId,
+        resumeSessionAt: isolated ? undefined : resumeAt,
+        allowedTools: [
+          'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep',
+          'WebSearch', 'WebFetch', 'Task', 'TaskOutput', 'TaskStop',
+          'TeamCreate', 'TeamDelete', 'SendMessage', 'TodoWrite',
+          'ToolSearch', 'Skill', 'NotebookEdit',
+          'mcp__bitclaw__*',
+          ...externalMcpToolPatterns,
+        ],
+        env: sdkEnv,
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        settingSources: ['project', 'user'],
+        mcpServers: {
+          bitclaw: {
+            command: 'node',
+            args: [mcpServerPath],
+            env: {},
+          },
+          ...externalMcpServers,
         },
-        ...externalMcpServers,
+        hooks: {
+          PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
+        },
       },
-      hooks: {
-        PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
-      },
-    },
-  })) {
-    // Emit throttled typing events (at most 1 per second)
-    const now = Date.now();
-    if (now - lastTypingAt >= TYPING_THROTTLE_MS) {
-      sendEventToHost({ type: 'typing', timestamp: new Date().toISOString() });
-      lastTypingAt = now;
-    }
+    })) {
+      lastEventAt = Date.now();
 
-    const toolCalls = extractToolCalls(message);
-    for (const toolCall of toolCalls) {
-      sendEventToHost({
-        type: 'tool_call',
-        toolName: toolCall.toolName,
-        toolUseId: toolCall.toolUseId,
-        isMcp: toolCall.isMcp,
-        mcpServer: toolCall.mcpServer,
-        mcpTool: toolCall.mcpTool,
-        timestamp: new Date().toISOString(),
-      });
-    }
+      // Emit throttled typing events (at most 1 per second)
+      const now = Date.now();
+      if (now - lastTypingAt >= TYPING_THROTTLE_MS) {
+        sendEventToHost({ type: 'typing', timestamp: new Date().toISOString() });
+        lastTypingAt = now;
+      }
 
-    if (message.type === 'system' && message.subtype === 'init' && !isolated) {
-      sessionId = message.session_id;
-      saveSessionState();
+      const toolCalls = extractToolCalls(message);
+      for (const toolCall of toolCalls) {
+        gotMeaningfulEvent = true;
+        sendEventToHost({
+          type: 'tool_call',
+          toolName: toolCall.toolName,
+          toolUseId: toolCall.toolUseId,
+          isMcp: toolCall.isMcp,
+          mcpServer: toolCall.mcpServer,
+          mcpTool: toolCall.mcpTool,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      if (message.type === 'system' && message.subtype === 'init' && !isolated) {
+        sessionId = message.session_id;
+        saveSessionState();
+      }
+      if (message.type === 'assistant') {
+        gotMeaningfulEvent = true;
+        if ('uuid' in message && !isolated) {
+          resumeAt = message.uuid;
+          saveSessionState();
+        }
+      }
+      if (message.type === 'result') {
+        gotMeaningfulEvent = true;
+        latestResult = 'result' in message && typeof message.result === 'string'
+          ? message.result
+          : null;
+        sendEventToHost({
+          type: 'result',
+          status: 'success',
+          result: latestResult,
+          sessionId: isolated ? undefined : sessionId,
+          timestamp: new Date().toISOString(),
+        });
+      }
     }
-    if (message.type === 'assistant' && 'uuid' in message && !isolated) {
-      resumeAt = message.uuid;
-      saveSessionState();
-    }
-    if (message.type === 'result') {
-      latestResult = 'result' in message && typeof message.result === 'string'
-        ? message.result
-        : null;
-      sendEventToHost({
-        type: 'result',
-        status: 'success',
-        result: latestResult,
-        sessionId: isolated ? undefined : sessionId,
-        timestamp: new Date().toISOString(),
-      });
-    }
+  } finally {
+    clearInterval(watchdog);
   }
 
   if (!isolated) {
@@ -355,6 +398,8 @@ async function processInbound(
     if (!sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.CLAUDE_CODE_OAUTH_TOKEN) {
       throw new Error('Missing Claude auth credentials (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)');
     }
+    log(`Inbound | type=messages | ts=${inbound.timestamp}`);
+    log(`Query start | isolated=false | session=${sessionId ?? 'new'}`);
     await runClaudeQuery(inbound.text ?? '', sdkEnv, false, externalMcpServers);
     return { shouldStop: false };
   }
