@@ -365,7 +365,8 @@ async function processInbound(
     if (!sdkEnv.ANTHROPIC_API_KEY && !sdkEnv.CLAUDE_CODE_OAUTH_TOKEN) {
       throw new Error('Missing Claude auth credentials (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN)');
     }
-    await runClaudeQuery(inbound.prompt ?? '', sdkEnv, true, externalMcpServers);
+    const taskLabel = inbound.taskId ? `[Scheduled task: ${inbound.taskId}] ` : '[Scheduled task] ';
+    await runClaudeQuery(taskLabel + (inbound.prompt ?? ''), sdkEnv, false, externalMcpServers);
     return { shouldStop: false };
   }
 
