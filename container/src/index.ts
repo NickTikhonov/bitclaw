@@ -47,7 +47,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, 'system-prompt.txt'), 'utf8');
 
 let sessionId: string | undefined;
-let resumeAt: string | undefined;
+
+/** Directory where the Claude CLI stores session JSONL transcripts. */
+const SESSION_JSONL_DIR = '/home/node/.claude/projects/-workspace-workspace';
 
 interface SessionState {
   sessionId?: string;
@@ -197,8 +199,32 @@ function extractToolCalls(message: unknown): ToolCallEvent[] {
 function clearSession(): void {
   log('Clearing stale session state');
   sessionId = undefined;
-  resumeAt = undefined;
   try { fs.unlinkSync(SESSION_STATE_FILE); } catch { /* already gone */ }
+}
+
+/**
+ * Read the session JSONL and return the UUID of the last assistant message.
+ * This is always consistent with the actual transcript on disk, survives
+ * crashes, and gives the CLI the correct branch-tip anchor for resume.
+ */
+function getResumeAtFromJsonl(sid: string): string | undefined {
+  const jsonlPath = path.join(SESSION_JSONL_DIR, `${sid}.jsonl`);
+  if (!fs.existsSync(jsonlPath)) return undefined;
+
+  try {
+    const lines = fs.readFileSync(jsonlPath, 'utf-8').trimEnd().split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const entry = JSON.parse(lines[i]);
+        if (entry.type === 'assistant' && typeof entry.uuid === 'string') {
+          return entry.uuid;
+        }
+      } catch { continue; }
+    }
+  } catch (err) {
+    log(`Failed to read session JSONL: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return undefined;
 }
 
 async function runAgentTurn(
@@ -238,6 +264,12 @@ async function runAgentTurn(
   // ── AbortController for this query ──
   const abort = new AbortController();
   activeAbort = abort;
+
+  // Derive resumeAt from the actual JSONL on disk (not in-memory state).
+  // This ensures we always anchor to the correct branch tip, even after
+  // crashes or watchdog aborts that leave dangling tool_use entries.
+  const resumeAt = sessionId ? getResumeAtFromJsonl(sessionId) : undefined;
+  log(`Resume: session=${sessionId ?? 'new'}, resumeAt=${resumeAt ?? 'none'}`);
 
   const q = query({
     prompt,
@@ -300,11 +332,6 @@ async function runAgentTurn(
         });
       }
 
-      if (message.type === 'assistant') {
-        if ('uuid' in message) {
-          resumeAt = message.uuid;
-        }
-      }
       if (message.type === 'result') {
         latestResult = 'result' in message && typeof message.result === 'string'
           ? message.result
