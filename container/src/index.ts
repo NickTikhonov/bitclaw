@@ -203,9 +203,11 @@ function clearSession(): void {
 }
 
 /**
- * Read the session JSONL and return the UUID of the last assistant message.
- * This is always consistent with the actual transcript on disk, survives
- * crashes, and gives the CLI the correct branch-tip anchor for resume.
+ * Read the session JSONL and return the UUID of the last "complete" assistant
+ * message — one whose stop_reason is "end_turn" (i.e. Claude finished
+ * speaking), skipping any dangling tool_use entries left by interrupted
+ * queries. This lets the CLI resume from a clean branch tip even if the
+ * transcript was corrupted by a watchdog abort or crash.
  */
 function getResumeAtFromJsonl(sid: string): string | undefined {
   const jsonlPath = path.join(SESSION_JSONL_DIR, `${sid}.jsonl`);
@@ -213,13 +215,40 @@ function getResumeAtFromJsonl(sid: string): string | undefined {
 
   try {
     const lines = fs.readFileSync(jsonlPath, 'utf-8').trimEnd().split('\n');
+    const skipped: string[] = [];
+
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         const entry = JSON.parse(lines[i]);
-        if (entry.type === 'assistant' && typeof entry.uuid === 'string') {
-          return entry.uuid;
+        if (entry.type !== 'assistant' || typeof entry.uuid !== 'string') continue;
+
+        const stopReason = entry.message?.stop_reason;
+        const content = entry.message?.content;
+        const toolNames = Array.isArray(content)
+          ? content.filter((b: { type: string }) => b.type === 'tool_use').map((b: { name: string }) => b.name)
+          : [];
+        const textSnippet = Array.isArray(content)
+          ? content.filter((b: { type: string }) => b.type === 'text').map((b: { text: string }) => b.text).join('').slice(0, 80)
+          : '';
+
+        // Skip assistant messages that ended with a tool call — these may
+        // be dangling (tool_result never written). Only anchor on messages
+        // where Claude finished its turn naturally.
+        if (stopReason !== 'end_turn') {
+          skipped.push(`uuid=${entry.uuid.slice(0, 8)} stop=${stopReason} tools=[${toolNames.join(',')}]`);
+          continue;
         }
+
+        if (skipped.length > 0) {
+          log(`resumeAt: skipped ${skipped.length} assistant message(s): ${skipped.join(' | ')}`);
+        }
+        log(`resumeAt: anchoring at uuid=${entry.uuid} stop=${stopReason} text="${textSnippet}${textSnippet.length >= 80 ? '…' : ''}"`);
+        return entry.uuid;
       } catch { continue; }
+    }
+
+    if (skipped.length > 0) {
+      log(`resumeAt: skipped ${skipped.length} assistant message(s) but found NO clean anchor: ${skipped.join(' | ')}`);
     }
   } catch (err) {
     log(`Failed to read session JSONL: ${err instanceof Error ? err.message : String(err)}`);
