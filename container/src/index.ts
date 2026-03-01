@@ -65,7 +65,7 @@ interface ToolCallEvent {
 }
 
 function log(message: string): void {
-  console.error(`[bitclaw-agent-runner] ${message}`);
+  console.error(`${new Date().toISOString()} [container] ${message}`);
 }
 
 interface McpServerBootstrap {
@@ -261,6 +261,10 @@ async function runAgentTurn(
   sdkEnv: Record<string, string | undefined>,
   externalMcpServers: Record<string, McpServerBootstrap>,
 ): Promise<void> {
+  const turnStart = Date.now();
+  const promptPreview = prompt.slice(0, 100).replace(/\n/g, ' ');
+  log(`Turn start: "${promptPreview}${prompt.length > 100 ? '…' : ''}"`);
+
   const TYPING_THROTTLE_MS = 1000;
 
   let latestResult: string | null = null;
@@ -349,6 +353,7 @@ async function runAgentTurn(
 
       if (message.type === 'system' && message.subtype === 'init') {
         sessionId = message.session_id;
+        log(`Session init: id=${sessionId}`);
         saveSessionState();
       }
 
@@ -385,6 +390,8 @@ async function runAgentTurn(
     activeAbort = null;
   }
 
+  const dur = ((Date.now() - turnStart) / 1000).toFixed(1);
+  log(`Turn complete: ${dur}s, result=${latestResult ? `${latestResult.length} chars` : 'none'}`);
   saveSessionState();
 }
 
@@ -451,6 +458,10 @@ async function main(): Promise<void> {
       if (shuttingDown) break;
       try {
         const payload = JSON.parse(fs.readFileSync(filePath, 'utf8')) as InboundEnvelope;
+        const desc = payload.type === 'task'
+          ? `type=task taskId=${payload.taskId}`
+          : `type=${payload.type} len=${(payload.text ?? '').length}`;
+        log(`Inbound pickup: ${desc}`);
         const result = await processInbound(payload, sdkEnv, externalMcpServers);
         archiveMessage(filePath);
         if (result.shouldAbort) {

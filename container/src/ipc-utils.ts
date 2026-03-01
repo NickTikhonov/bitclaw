@@ -20,7 +20,15 @@ export function writeMessageAtomic(targetDir: string, fileName: string, payload:
   return finalPath;
 }
 
+function ipcLog(message: string): void {
+  console.error(`${new Date().toISOString()} [container] ${message}`);
+}
+
 export function sendEventToHost(payload: Record<string, unknown>): string {
+  const type = String(payload.type ?? 'unknown');
+  if (type !== 'typing') {
+    ipcLog(`IPC send: type=${type}`);
+  }
   return writeMessageAtomic(OUTBOUND_DIR, createMessageFilename('out'), payload);
 }
 

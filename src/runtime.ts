@@ -4,6 +4,7 @@ import path from 'node:path';
 import { CONTAINER_IMAGE, CONTAINER_NAME, createBitclawPaths, ensureBitclawDirs, ensureWorkspaceAgentFile, type BitclawPaths } from './config.js';
 import { buildMountFlags, loadConfig, resolveMcpServers } from './customisation.js';
 import { loadProjectEnv } from './env.js';
+import { log } from './log.js';
 
 export interface RuntimeStartResult {
   paths: BitclawPaths;
@@ -11,6 +12,8 @@ export interface RuntimeStartResult {
 }
 
 export function buildContainerImage(projectRoot: string): void {
+  log('Building container image…');
+  const buildStart = Date.now();
   const dockerfile = path.join(projectRoot, 'container', 'Dockerfile');
   const build = spawnSync(
     'docker',
@@ -20,9 +23,11 @@ export function buildContainerImage(projectRoot: string): void {
   if (build.status !== 0) {
     throw new Error(`docker build failed with status ${build.status ?? 1}`);
   }
+  log(`Image built (${((Date.now() - buildStart) / 1000).toFixed(1)}s)`);
 }
 
 export function stopContainer(): void {
+  log('Stopping container…');
   // Send SIGTERM via `docker stop` — gives the container time to abort
   // any in-flight query and clean up (default 10s grace period).
   spawnSync('docker', ['stop', '-t', '10', CONTAINER_NAME], { stdio: 'ignore' });
@@ -35,8 +40,11 @@ export function startContainer(projectRoot: string): RuntimeStartResult {
   const paths = createBitclawPaths();
   ensureBitclawDirs(paths);
   ensureWorkspaceAgentFile(paths);
+  log(`Starting container (image=${CONTAINER_IMAGE})`);
 
   const config = loadConfig(projectRoot);
+  const mcpNames = Object.keys(config.mcpServers);
+  log(`Config: ${mcpNames.length} MCP server(s)${mcpNames.length ? ` [${mcpNames.join(', ')}]` : ''}, ${config.mounts.length} mount(s)`);
 
   buildContainerImage(projectRoot);
   stopContainer();
