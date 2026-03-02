@@ -395,25 +395,6 @@ async function runAgentTurn(
   saveSessionState();
 }
 
-async function processInbound(
-  inbound: InboundEnvelope,
-  sdkEnv: Record<string, string | undefined>,
-  externalMcpServers: Record<string, McpServerBootstrap>,
-): Promise<{ shouldAbort: boolean }> {
-  if (inbound.type === 'shutdown') {
-    return { shouldAbort: true };
-  }
-
-  if (inbound.type === 'messages' || inbound.type === 'task') {
-    let prompt = '';
-    prompt = inbound.type === 'messages' ? `${inbound.text}` : `[Scheduled task: ${inbound.taskId}]\n${inbound.prompt}`;
-    await runAgentTurn(prompt, sdkEnv, externalMcpServers);
-    return { shouldAbort: false };
-  }
-
-  throw new Error(`Unsupported inbound type: ${inbound.type}`);
-}
-
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -454,34 +435,64 @@ async function main(): Promise<void> {
   let shouldStop = false;
   while (!shouldStop && !shuttingDown) {
     const inboundFiles = listInboundMessagesSorted();
+    if (inboundFiles.length === 0) {
+      await sleep(POLL_MS);
+      continue;
+    }
+
+    // Read all pending envelopes
+    const pending: { path: string; envelope: InboundEnvelope }[] = [];
     for (const filePath of inboundFiles) {
-      if (shuttingDown) break;
       try {
-        const payload = JSON.parse(fs.readFileSync(filePath, 'utf8')) as InboundEnvelope;
-        const desc = payload.type === 'task'
-          ? `type=task taskId=${payload.taskId}`
-          : `type=${payload.type} len=${(payload.text ?? '').length}`;
-        log(`Inbound pickup: ${desc}`);
-        const result = await processInbound(payload, sdkEnv, externalMcpServers);
-        archiveMessage(filePath);
-        if (result.shouldAbort) {
-          shouldStop = true;
-          break;
-        }
-      } catch (err) {
-        sendEventToHost({
-          type: 'result',
-          status: 'error',
-          error: err instanceof Error ? err.message : String(err),
-          result: null,
-          timestamp: new Date().toISOString(),
-        });
+        pending.push({ path: filePath, envelope: JSON.parse(fs.readFileSync(filePath, 'utf8')) });
+      } catch {
         archiveMessage(filePath);
       }
     }
-    if (!shouldStop && !shuttingDown) {
-      await sleep(POLL_MS);
+    if (pending.length === 0) continue;
+
+    const first = pending[0];
+
+    // ── Shutdown ──
+    if (first.envelope.type === 'shutdown') {
+      archiveMessage(first.path);
+      shouldStop = true;
+      continue;
     }
+
+    // ── Task: run individually ──
+    if (first.envelope.type === 'task') {
+      log(`Inbound pickup: type=task taskId=${first.envelope.taskId}`);
+      try {
+        await runAgentTurn(
+          `[Scheduled task: ${first.envelope.taskId}]\n${first.envelope.prompt}`,
+          sdkEnv, externalMcpServers,
+        );
+      } catch (err) {
+        sendEventToHost({
+          type: 'result', status: 'error',
+          error: err instanceof Error ? err.message : String(err),
+          result: null, timestamp: new Date().toISOString(),
+        });
+      }
+      archiveMessage(first.path);
+      continue;
+    }
+
+    // ── User messages: batch all pending messages into one turn ──
+    const batch = pending.filter((p) => p.envelope.type === 'messages');
+    const combined = batch.map((b) => b.envelope.text ?? '').join('\n\n');
+    log(`Inbound pickup: ${batch.length} user message(s) batched, ${combined.length} chars`);
+    try {
+      await runAgentTurn(combined, sdkEnv, externalMcpServers);
+    } catch (err) {
+      sendEventToHost({
+        type: 'result', status: 'error',
+        error: err instanceof Error ? err.message : String(err),
+        result: null, timestamp: new Date().toISOString(),
+      });
+    }
+    for (const b of batch) archiveMessage(b.path);
   }
 
   log('Main loop exited cleanly');
